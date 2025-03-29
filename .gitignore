@@ -8,3 +8,4 @@
 
 data/
 split_csv.py
+.env
