@@ -1,0 +1,23 @@
+version: '3.8'
+services:
+  etl:
+    image: etl_service_image:latest
+    container_name: etl_service_container
+    build: .
+    restart: always
+    # volumes:
+    #   - type: bind
+    #     source: ./etl_service/data
+    #     target: /app/data
+    #     is_directory: true
+    volumes:
+      - ./data:/app/data
+    # environment:
+    #   - CLICKHOUSE_USERNAME=${CLICKHOUSE_USERNAME}
+    #   - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD}
+    #   - AWS_BUCKET=${AWS_BUCKET}
+    #   - AWS_REGION=${AWS_REGION}
+    #   - AWS_ACCESS_KEY=${AWS_ACCESS_KEY}
+    #   - AWS_SECRET_KEY=${AWS_SECRET_KEY}
+    env_file:
+      - .env

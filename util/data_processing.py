@@ -41,6 +41,9 @@ def extract_file(file_path, output_path):
     :param output_path: path to the output directory
     :return: Path to the renamed extracted file
     """
+    os.makedirs(output_path, exist_ok=True)  # Ensure output directory exists
+    print(f"Extracting {file_path} to {output_path}...")
+
     # Extract the file
     with zipfile.ZipFile(file_path, 'r') as zip_ref:
         zip_ref.extractall(output_path)

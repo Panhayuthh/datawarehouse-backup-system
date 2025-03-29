@@ -2,20 +2,25 @@ import os
 import time
 import csv
 import shutil
+from dotenv import load_dotenv
+
 import clickhouse_connect
+import boto3
+
 from clickhouse_connect.driver.exceptions import DataError
 from clickhouse_connect.driver.exceptions import ClickHouseError
 
 from util import data_processing, data_pushing
 
-UPLOAD_FOLDER = '/data/uploads'
-EXTRACTED_FOLDER = '/data/uploads/extracted'
-PROCESSED_FOLDER = '/data/processed'
+load_dotenv()
+
+UPLOAD_FOLDER = 'data/uploads/'
+EXTRACTED_FOLDER = 'data/uploads/extracted'
+PROCESSED_FOLDER = 'data/processed'
 
 PROCESSED_FILES = 'processed_files.txt'
 TABLE_SCHEMA = 'table_schema.json'
 RENAME_MAPPING = 'rename_mapping.json'
-
 
 CLICKHOUSE_HOST="cd1.biron-analytics.com"
 CLICKHOUSE_DATABASE="smallable2_playground"
@@ -23,6 +28,26 @@ CLICKHOUSE_USERNAME= os.getenv('CLICKHOUSE_USERNAME')
 CLICKHOUSE_PASSWORD= os.getenv('CLICKHOUSE_PASSWORD')
 
 client = clickhouse_connect.get_client(host=CLICKHOUSE_HOST, port=8443, database=CLICKHOUSE_DATABASE, username=CLICKHOUSE_USERNAME, password=CLICKHOUSE_PASSWORD)
+
+AWS_BUCKET = os.getenv('AWS_BUCKET')
+AWS_ACCESS_KEY = os.getenv('AWS_ACCESS_KEY')
+AWS_SECRET_KEY = os.getenv('AWS_SECRET_KEY')
+S3_FOLDER = 'uploads/'
+
+s3_client = boto3.client(
+    "s3",
+    aws_access_key_id=AWS_ACCESS_KEY,
+    aws_secret_access_key=AWS_SECRET_KEY,
+)
+
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
+
+if not os.path.exists(EXTRACTED_FOLDER):
+    os.makedirs(EXTRACTED_FOLDER)
+
+if not os.path.exists(PROCESSED_FOLDER):
+    os.makedirs(PROCESSED_FOLDER)
 
 # Create folders if they don't exist
 if not os.path.exists(PROCESSED_FILES):
@@ -38,14 +63,25 @@ def main():
     Checks daily for new files, skips already processed ones, and handles deduplication
     both within and across files.
     """
+    # List all files in the UPLOAD_FOLDER
+    uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_FOLDER)
+    if 'Contents' not in uploaded_files:
+        print("No files found in the upload folder.")
+        return
+
     # Check for new files in the UPLOAD_FOLDER
-    for filename in os.listdir(UPLOAD_FOLDER):
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
+    for obj in uploaded_files['Contents']:
+        file_key = obj['Key']
+        filename = os.path.basename(file_key)
 
         # Skip if not a file or already processed or wrong format
-        if not os.path.isfile(file_path) or filename in processed_files or not filename.endswith(('.csv', '.zip')):
+        if filename in processed_files or not filename.endswith(('.csv', '.zip')):
             print(f"Skipping {filename}: Already processed, not a file, or invalid format.")
             continue
+
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
+        print(f"Downloading {filename} to {UPLOAD_FOLDER}...")
+        s3_client.download_file(AWS_BUCKET, file_key, file_path)
 
         print(f"\nProcessing file: {file_path}")
 
@@ -53,7 +89,6 @@ def main():
         if filename.endswith('.zip'):
             try:
                 file_path = data_processing.extract_file(file_path, EXTRACTED_FOLDER)
-                print(f"Extracted file: {file_path}")
             except Exception as e:
                 print(f"Error extracting {file_path}: {e}")
                 continue

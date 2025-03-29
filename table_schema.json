@@ -1,6 +1,6 @@
 {
   "smallable_campaign_events": {
-    "table_name": "splio_export_tmp",
+    "table_name": "splio_export_smallable_campaign_events",
     "column_names": [
     "id", 
     "email", 

@@ -1,2 +1,5 @@
 smallable_campaign_events_20241210120546_test_1.csv
 export_20240919154941.zip
+export_20241210120546.zip
+smallable_campaign_events_0ac8de8e-0be3-11f0-a9dd-321d27b94f33.zip
+smallable_campaign_events_3b9fc7b5-09ee-11f0-8078-0add7d8e2e93.zip
