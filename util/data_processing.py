@@ -4,149 +4,116 @@ import hashlib
 import sys
 import time
 import os
-import shutil
+import re
 import pandas as pd
 from pathlib import Path
 from itertools import islice
+import chardet
+from collections import Counter
+import json
+from contextlib import ExitStack
 
-def get_rename_columns(table_name):
-    print(f"Getting column names for table: {table_name}")
-    column_names = None
+def get_rename_columns(table_name, file_path):
+    """
+    Get the rename mapping for columns from a JSON file.
 
-    if 'smallable_campaign_events' in table_name:
-        column_names = {
-            "Email": "email",
-            "prénom": "first_name",
-            "nom": "last_name",
-            "langue": "language",
-            "Mobile": "mobile",
-            "Campaign Event Type": "campaign_event_type",
-            "Event Date": "event_date",
-            "Event Datetime": "event_datetime",
-            "Sending ID": "sending_id",
-            "Campaign ID": "campaign_id",
-            "Campaign Name": "campaign_name",
-            "Campaign Category": "campaign_category",
-            "Campaign Operation Code": "campaign_operation_code",
-            "Email Subject": "email_subject",
-            "Content id": "content_id",
-            "Content Name": "content_name",
-            "abonnements": "subscriptions",
-            "Clicked Link": "clicked_link",
-            "Unsubscribe Reason": "unsubscribe_reason",
-            "IDENTIFIANT": "identifier",
-            "CIVILITÉ": "civility",
-            "ADRESSE_STREET1_FACTURATION": "billing_address_line_1",
-            "ADRESSE_STREET2_FACTURATION": "billing_address_line_2",
-            "CODEPOSTAL_FACTURATION": "billing_postal_code",
-            "VILLE_FACTURATION": "billing_city",
-            "PAYS_FACTURATION": "billing_country",
-            "DATE DE NAISSANCE": "date_of_birth",
-            "PARENTS": "parents",
-            "NB_ENFANTS": "number_of_children",
-            "ENFANT1_PRENOM": "child_1_first_name",
-            "ENFANT1_SEXE": "child_1_gender",
-            "ENFANT1_DATE_DE_NAISSANCE": "child_1_date_of_birth",
-            "ENFANT2_PRENOM": "child_2_first_name",
-            "ENFANT2_SEXE": "child_2_gender",
-            "ENFANT2_DATE_DE_NAISSANCE": "child_2_date_of_birth",
-            "ENFANT3_PRENOM": "child_3_first_name",
-            "ENFANT3_SEXE": "child_3_gender",
-            "ENFANT3_DATE_DE_NAISSANCE": "child_3_date_of_birth",
-            "ENFANT4_PRENOM": "child_4_first_name",
-            "ENFANT4_SEXE": "child_4_gender",
-            "ENFANT4_DATE_DE_NAISSANCE": "child_4_date_of_birth",
-            "ENFANT5_PRENOM": "child_5_first_name",
-            "ENFANT5_SEXE": "child_5_gender",
-            "ENFANT5_DATE_DE_NAISSANCE": "child_5_date_of_birth",
-            "DATE_CREATION_COMPTE_SML": "SML_account_creation_date",
-            "DATE_PREVU_ACCOUCHEMENT": "expected_delivery_date",
-            "SOURCE_ENTREE_BASE_SML": "SML_source_entry",
-            "LANGUE_CREATION_COMPTE": "account_creation_language",
-            "OPTIN_NL": "NL_option",
-            "DATE_INSCRIPTION_NL": "NL_registration_date",
-            "NB_TOTAL_COMMANDES": "total_orders",
-            "MONTANT_TOTAL_COMMANDES_EUR": "total_order_amount_eur",
-            "DATE_1ERE_COMMANDE": "first_order_date",
-            "DATE_DERNIERE_COMMANDE": "last_order_date",
-            "SEGMENT_USERINTERVIEW": "segment_user_interview",
-            "SEGMENT_RAMPUP": "segment_ramp_up",
-            "SEGMENT_UR": "segment_ur",
-            "CODE_OPE_FDP": "operation_code_fdp",
-            "CODE_OPE_CHURN": "operation_code_churn",
-            "SEGMENT_RFM": "segment_rfm",
-            "SEGMENT_UR_THECLIENTISTHEBOSS": "segment_ur_theclientistheboss",
-            "DEVISE_DERNIERE_COMMANDE": "currency_of_last_order",
-            "CODE_SALARIE_NOEL": "employee_christmas_code",
-            "PAYS_OPE_FID": "loyalty_operation_country",
-            "OPE_FID_OCT22": "loyalty_operation_october_2022",
-            "OPTIN_SME": "SME_option",
-            "ADHESION_SME": "SME_membership",
-            "OPE_FID_MARS23": "loyalty_operation_march_2023",
-            "SHOPPING_PARTY_VIC": "shopping_party_vic",
-            "DATE_ADHESION_SME": "SME_membership_date",
-            "DATE_DESINSCRIPTION_SME": "SME_unsubscription_date",
-            "NB_BONS_EMIS_AJD": "vouchers_issued_today",
-            "DATE_BONS_EMIS_AJD": "date_vouchers_issued_today",
-            "NB_BONS_DISPO": "available_vouchers",
-            "NB_POINTS_DISPO": "available_points",
-            "NB_TOTAL_BONS": "total_vouchers",
-            "DATE_LAST_BON_EMIS": "last_voucher_issued_date",
-            "DATE_EXPIRATION_BON": "voucher_expiration_date",
-            "DATE_MAJ_POINT": "points_update_date",
-            "Catégorie Bébé - Tous produits": "baby_category_all_products",
-            "Catégorie Enfant-Ado - Tous produits": "child_teen_category_all_products",
-            "Catégorie Femme - Mode, access & shoes": "women_category_fashion_accessories_shoes",
-            "Catégorie Homme - Mode, access & shoes": "men_category_fashion_accessories_shoes",
-            "Catégorie Maison - adulte - Autres Design": "home_category_adult_other_design",
-            "Catégorie Maison - adulte - Mobilier": "home_category_adult_furniture",
-            "Catégorie Soins et beauté adulte": "adult_care_beauty_category",
-            "OPE_FID_MARS24": "loyalty_operation_march_2024",
-            "DEVISE_OPE_FID_MARS24": "currency_loyalty_operation_march_2024",
-            "Mobile International": "international_mobile",
-            "Prénom Challenge Influence": "first_name_challenge_influence",
-            "Montant et Devise Challenge Influence": "amount_currency_challenge_influence",
-            "Code Challenge Influence": "challenge_influence_code",
-            "Relance Challenge Influence": "challenge_influence_follow_up"
-        }
+    Parameters
+        table_name: Name of the table
+        file_path: Path to the JSON file containing rename mappings
+    returns
+        Dictionary of rename mappings for the specified table
+    """
+    with open(file_path, 'r', encoding='utf-8') as file:
+        rename_mappings = json.load(file)
 
-    return column_names
+    # Look for partial matches instead of exact matches
+    for mapped_table in rename_mappings:
+        if mapped_table in table_name:
+            return rename_mappings[mapped_table]
+
+    return {}
 
 def extract_file(file_path, output_path):
     """
-    Extract the file in the given path
-    :param file_path: path to the file
+    Extract the file in the given path and rename it.
+
+    :param file_path: path to the zip file
     :param output_path: path to the output directory
-    :return: None
+    :return: Path to the renamed extracted file
     """
+    # Extract the file
     with zipfile.ZipFile(file_path, 'r') as zip_ref:
         zip_ref.extractall(output_path)
+        extracted_file_name = zip_ref.namelist()[0]  # Get the name of the first file in the zip
 
-    print(f"File extracted to {output_path}")
-    return output_path + '/' + zip_ref.namelist()[0]
+    # Construct the full path of the extracted file
+    extracted_file_path = output_path + '/' + extracted_file_name
 
+    # Extract the base name
+    base_name = extracted_file_name.split('/')[-1].rsplit('_', 1)[0]
 
-def rename_column_in_csv(file_path, column_name, output_file):
+    # Extract the date from the original zip file name
+    match = re.search(r'\d+', os.path.basename(file_path))
+    if match:
+        file_date = match.group()  # Use the numeric part from the zip file name
+    else:
+        file_date = time.strftime("%Y%m%d")  # Use current date if no numeric part is found
+
+    # Construct the new file name
+    new_file_name = f"{base_name}_{file_date}.csv"
+    new_file_path = output_path + '/' + new_file_name
+
+    # Rename the extracted file
+    os.rename(extracted_file_path, new_file_path)
+
+    print(f"File extracted and renamed to {new_file_path}")
+    return new_file_path
+
+def detect_delimiter_manual(file_path):
+    with open(file_path, 'r') as file:
+        first_line = file.readline()
+        delimiters = [',', ';', '\t', '|']
+        counts = Counter({delim: first_line.count(delim) for delim in delimiters})
+        return counts.most_common(1)[0][0]
+
+def detect_encoding(file_path, sample_size=100000):
     """
-    Rename a column in a CSV file
-    :param file_path: path to the CSV file
-    :param column_name: name of the column to rename
-    :param output_file: path to save the output CSV file
+    Detects the encoding of a given file by analyzing a sample of bytes.
+
+    :param file_path: Path to the file to analyze.
+    :param sample_size: Number of bytes to read for encoding detection (default: 100KB).
+    :return: Detected encoding.
+    """
+    with open(file_path, "rb") as f:
+        result = chardet.detect(f.read(sample_size))
+    return result["encoding"]
+
+def rename_column_in_csv(file_path, column_mapping, output_file):
+    """
+    Rename a column in a CSV file while handling different encodings.
+
+    :param file_path: Path to the CSV file.
+    :param column_mapping: Dictionary with {old_column_name: new_column_name}.
+    :param output_file: Path to save the output CSV file.
     """
 
-    # Remove the existing file if it exists
+    # Detect encoding
+    encoding = detect_encoding(file_path)
+    print(f"Detected encoding: {encoding}")
+
+    # Remove the existing output file if it exists
     if os.path.exists(output_file):
         os.remove(output_file)
         print(f"Old file {output_file} removed!")
 
-    # Process each chunk
-    for i, chunk in enumerate(pd.read_csv(file_path, 
-                                          chunksize=100000, 
-                                          dtype=str, 
-                                          delimiter=";", 
-                                          encoding="utf-8",
-                                          )): 
-        cleaned_chunk = chunk.rename(columns=column_name)
+    # Process the file in chunks
+    for i, chunk in enumerate(pd.read_csv(file_path,
+                                          chunksize=100000,
+                                          dtype=str,
+                                          delimiter=";",
+                                          encoding=encoding,
+                                          )):
+        cleaned_chunk = chunk.rename(columns=column_mapping)
 
         # Save to file (Append after the first write)
         if i == 0:
@@ -156,7 +123,7 @@ def rename_column_in_csv(file_path, column_name, output_file):
 
         print(f"\rChunk {i+1} processed and saved!", end="", flush=True)
 
-    print("\nColumne renamed completed and saved to:", output_file)
+    print("\nColumn rename completed and saved to:", output_file)
 
 def get_row_hash(row):
     """Create a hash of the row to efficiently compare rows"""
@@ -197,168 +164,120 @@ def compare_csv_structure(file1_path, file2_path):
 
     return column_matches, headers1, headers2
 
-def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, output_file_path=None, chunk_size=100000, reuse_hashes=False):
+def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, output_file_path=None, chunk_size=100000):
     """
     Efficiently compare and deduplicate CSV files with minimal memory usage.
-    Can reuse hashes from previous runs to avoid re-hashing the comparative file.
+    Now prevents output_file_path from being the same as comparative_file_path for safety.
 
     Args:
-    comparative_file_path (str): Path to the CSV to compare and deduplicate
-    target_file_path (str): Path to the CSV to compare against
-    output_file_path (str, optional): Path to save unique rows. If same as comparative_file_path, 
-                                      will update the comparative file with unique rows.
-    chunk_size (int, optional): Number of rows to process in memory at a time
-    reuse_hashes (bool, optional): Whether to reuse previously generated hashes
-
-    Returns:
-    dict: A dictionary containing the row_hashes and headers of the comparative file
+        comparative_file_path (str): Path to the CSV to compare against (will NOT be modified)
+        target_file_path (str): Path to the CSV to deduplicate
+        output_file_path (str, optional): Path to save unique rows (cannot be same as comparative_file_path)
+        chunk_size (int, optional): Number of rows to process in memory at a time
     """
     start_time = time.time()
 
-    # Global dictionary to store hashes and headers
-    global saved_row_hashes
-    global saved_headers
+    # Validate output path safety
+    if output_file_path:
+        output_file_path = Path(output_file_path).resolve()
+        comparative_path = Path(comparative_file_path).resolve()
+
+        if output_file_path == comparative_path:
+            raise ValueError("Output path cannot be the same as the comparative file path")
+
+    # set max field size limit to maximum
+    try:
+        csv.field_size_limit(sys.maxsize)
+    except OverflowError:
+        csv.field_size_limit(2147483647)  # 2^31 - 1
 
     # Validate file paths
     file1 = Path(comparative_file_path)
     file2 = Path(target_file_path)
 
-    if not file1.exists() or not file2.exists():
-        print(f"Error: One or both files don't exist.")
-        return 0
+    if not file1.exists():
+        raise FileNotFoundError(f"Comparative file not found: {comparative_file_path}")
+    if not file2.exists():
+        raise FileNotFoundError(f"Target file not found: {target_file_path}")
 
     # Print file information
-    print(f"\nStarting comparison of files:")
-    print(f"File 1: {file1.name} ({file1.stat().st_size / (1024 * 1024):.2f} MB)")
-    print(f"File 2: {file2.name} ({file2.stat().st_size / (1024 * 1024):.2f} MB)")
-
-    # Function to compare CSV structure
-    def compare_csv_structure(file1_path, file2_path):
-        with open(file1_path, 'r', newline='', encoding='utf-8') as f1:
-            reader1 = csv.reader(f1)
-            headers1 = next(reader1)
-            
-        with open(file2_path, 'r', newline='', encoding='utf-8') as f2:
-            reader2 = csv.reader(f2)
-            headers2 = next(reader2)
-            
-        columns_match = (headers1 == headers2)
-        
-        if not columns_match:
-            print("Column structure mismatch:")
-            print(f"File 1 headers: {headers1}")
-            print(f"File 2 headers: {headers2}")
-            
-        return columns_match, headers1, headers2
+    print(f"Starting comparison of files:")
+    print(f"Comparative File: {file1.name} ({file1.stat().st_size / (1024 * 1024):.2f} MB)")
+    print(f"Target File: {file2.name} ({file2.stat().st_size / (1024 * 1024):.2f} MB)")
 
     # First check column structure
     columns_match, headers1, headers2 = compare_csv_structure(comparative_file_path, target_file_path)
-
     if not columns_match:
-        print("\nExiting due to column structure mismatch.")
-        # TODO: Add option to proceed with column mismatch
+        print("\nExiting program due to column structure mismatch.")
         return 0
 
-    # Check if we can reuse hashes
-    if reuse_hashes and 'saved_row_hashes' in globals() and 'saved_headers' in globals() and saved_headers == headers1:
-        print("Reusing existing hash set from previous run...")
-        row_hashes = saved_row_hashes
-        row_count_file1 = len(row_hashes) + 1  # +1 for header
-    else:
-        # Create a hash set from the comparative file
-        print("Generating hash set from comparative file...")
-        row_hashes = set()
-        row_count_file1 = 0
+    # Generate hash set from comparative file
+    print("Generating hash set from comparative file...")
+    row_hashes = set()
+    row_count_file1 = 0
 
-        with open(comparative_file_path, 'r', newline='', encoding='utf-8') as f1:
-            reader = csv.reader(f1)
-            # Skip header
-            headers1 = next(reader)
-            row_count_file1 += 1
+    with open(comparative_file_path, 'r', newline='', encoding='utf-8') as f1:
+        reader = csv.reader(f1)
+        headers1 = next(reader)
+        row_count_file1 += 1
 
-            # Process rows in chunks to limit memory usage
-            while True:
-                chunk = list(islice(reader, chunk_size))
-                if not chunk:
-                    break
+        while True:
+            chunk = list(islice(reader, chunk_size))
+            if not chunk:
+                break
 
-                for row in chunk:
-                    row_hash = hashlib.md5(str(row).encode()).hexdigest()
-                    row_hashes.add(row_hash)
-                    row_count_file1 += 1
+            for row in chunk:
+                row_hash = hashlib.md5(str(row).encode()).hexdigest()
+                row_hashes.add(row_hash)
+                row_count_file1 += 1
 
-                print(f"\rProcessed {row_count_file1:,} rows from comparative file...", end="", flush=True)
+            print(f"\rProcessed {row_count_file1:,} rows from comparative file...", end="", flush=True)
 
-        print(f"\nCompleted processing {row_count_file1:,} rows from comparative file.")
-        
-        # Save hashes globally for future use
-        saved_row_hashes = row_hashes
-        saved_headers = headers1
+    print(f"\nCompleted processing {row_count_file1:,} rows from comparative file.")
 
-    # Now process the target file
+    # Process target file
     print("Processing target file for unique rows...")
     duplicate_count = 0
     unique_rows = 0
     row_count_file2 = 0
 
-    # Prepare output file
+    # Prepare output handling
     if output_file_path:
-        # Create directory if it doesn't exist
-        output_file_dir = Path(output_file_path).parent
-        output_file_dir.mkdir(parents=True, exist_ok=True)
-
-        # Check if output file is the same as comparative file
-        if output_file_path == comparative_file_path:
-            temp_output_path = f"{output_file_path}.temp"
-            output_file = open(temp_output_path, 'w', newline='', encoding='utf-8')
-        else:
-            output_file = open(output_file_path, 'w', newline='', encoding='utf-8')
-        
-        writer = csv.writer(output_file)
+        output_dir = Path(output_file_path).parent
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_mode = 'w'
     else:
-        output_file = None
-        writer = None
+        output_mode = None
 
-    with open(target_file_path, 'r', newline='', encoding='utf-8') as f2:
-        reader = csv.reader(f2)
-        # Read and write headers
-        headers2 = next(reader)
-        row_count_file2 += 1
-
-        if output_file:
+    with ExitStack() as stack:
+        # Open output file if specified
+        if output_mode:
+            output_file = stack.enter_context(open(output_file_path, output_mode, newline='', encoding='utf-8'))
+            writer = csv.writer(output_file)
             writer.writerow(headers2)
+        else:
+            writer = None
 
-        # Process rows in chunks
-        for row in reader:
-            row_hash = hashlib.md5(str(row).encode()).hexdigest()
+        with open(target_file_path, 'r', newline='', encoding='utf-8') as f2:
+            reader = csv.reader(f2)
+            headers2 = next(reader)
             row_count_file2 += 1
 
-            if row_hash not in row_hashes:
-                if output_file:
-                    writer.writerow(row)
-                unique_rows += 1
-                # Add to hash set for future comparisons
-                row_hashes.add(row_hash)
-            else:
-                duplicate_count += 1
+            for row in reader:
+                row_hash = hashlib.md5(str(row).encode()).hexdigest()
+                row_count_file2 += 1
 
-            # Print progress periodically
-            if row_count_file2 % 100000 == 0:
-                print(f"\rProcessed {row_count_file2:,} rows from target file...", end="", flush=True)
+                if row_hash not in row_hashes:
+                    if writer:
+                        writer.writerow(row)
+                    unique_rows += 1
+                else:
+                    duplicate_count += 1
 
-    # Close output file if opened
-    if output_file:
-        output_file.close()
-        
-        # If output is the same as comparative file, replace it
-        if output_file_path == comparative_file_path:
-            shutil.move(temp_output_path, output_file_path)
-            print(f"\nUpdated {output_file_path} with unique rows.")
-            
-            # Update the global hash set with the new file
-            saved_row_hashes = row_hashes
+                if row_count_file2 % 100000 == 0:
+                    print(f"\rProcessed {row_count_file2:,} rows from target file...", end="", flush=True)
 
-    # Calculate and print results
+    # Results summary
     end_time = time.time()
     duration = end_time - start_time
 
@@ -366,22 +285,127 @@ def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, o
     print(f"Time taken: {duration:.2f} seconds")
     print(f"Total rows in comparative file: {row_count_file1:,}")
     print(f"Total rows in target file: {row_count_file2:,}")
-    print(f"Number of duplicate rows found: {duplicate_count:,}")
-    print(f"Number of unique rows: {unique_rows:,}")
+    print(f"Duplicate rows found: {duplicate_count:,}")
+    print(f"Unique rows kept: {unique_rows:,}")
 
-    # Provide insights
-    if duplicate_count == row_count_file2 - 1:  # Subtract 1 for header
-        print("Files appear to be DUPLICATES (all rows match)")
-    elif duplicate_count == 0:
-        print("Files have NO duplicated rows")
+    if output_file_path:
+        print(f"\nDeduplicated output saved to: {output_file_path}")
+
+
+def self_deduplicate_csv(input_file_path, output_file_path=None, chunk_size=100000):
+    """
+    Efficiently remove duplicate rows within a single CSV file with minimal memory usage.
+
+    Args:
+    input_file_path (str): Path to the CSV file to deduplicate
+    output_file_path (str, optional): Path to save deduplicated rows. If None, will create a new file with "_deduplicated" suffix.
+    chunk_size (int, optional): Number of rows to process in memory at a time
+    preserve_order (bool, optional): Whether to preserve the original order of rows (first occurrence kept)
+
+    Returns:
+    dict: A dictionary containing statistics about the deduplication process
+    """
+
+    start_time = time.time()
+
+    # Validate file path
+    file_path = Path(input_file_path)
+
+    if not file_path.exists():
+        print(f"Error: File doesn't exist: {input_file_path}")
+        return {"success": False, "error": "File not found"}
+
+    # Set default output path if not provided
+    if not output_file_path:
+        output_file_path = str(file_path.with_name(f"{file_path.stem}_deduplicated{file_path.suffix}"))
+
+    # Print file information
+    print(f"Starting self-deduplication:")
+    print(f"File: {file_path.name} ({file_path.stat().st_size / (1024 * 1024):.2f} MB)")
+    print(f"Output will be saved to: {output_file_path}")
+
+    # Create directory for output file if it doesn't exist
+    output_path = Path(output_file_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Use a temporary file if the output is the same as the input
+    if output_file_path == input_file_path:
+        temp_output_path = f"{output_file_path}.temp"
+        actual_output_path = temp_output_path
     else:
-        print(f"Files have {duplicate_count:,} duplicated rows")
-        
-    # Return the hash set for potential future use
-    return {"row_hashes": row_hashes, "headers": headers1}
+        actual_output_path = output_file_path
 
-# TODO: add a function to find different columns between two files,
-# add the missing columns to the second file with correct position and empty values
+    # Track duplicates and statistics
+    row_hashes = set()
+    row_count = 0
+    unique_count = 0
+    duplicate_count = 0
+
+    # set max field size limit to maximum
+    try:
+        csv.field_size_limit(sys.maxsize)
+    except OverflowError:
+        # Use a smaller value
+        csv.field_size_limit(2147483647)  # 2^31 - 1
+
+    # Process the file
+    with open(input_file_path, 'r', newline='', encoding='utf-8') as input_file, \
+         open(actual_output_path, 'w', newline='', encoding='utf-8') as output_file:
+
+        reader = csv.reader(input_file)
+        writer = csv.writer(output_file)
+
+        # Read and write headers
+        try:
+            headers = next(reader)
+            writer.writerow(headers)
+            row_count += 1
+            unique_count += 1
+        except StopIteration:
+            print("Warning: Empty input file or no headers found.")
+            return {"success": False, "error": "Empty file"}
+
+        # Process remaining rows
+        for row in reader:
+            row_count += 1
+
+            # Create hash for the row
+            row_hash = hashlib.md5(str(row).encode()).hexdigest()
+
+            # Check if this is a duplicate
+            if row_hash not in row_hashes:
+                # Write to output file
+                writer.writerow(row)
+                row_hashes.add(row_hash)
+                unique_count += 1
+            else:
+                duplicate_count += 1
+
+            # Print progress periodically
+            if row_count % chunk_size == 0:
+                print(f"\rProcessed {row_count:,} rows, found {duplicate_count:,} duplicates...", end="", flush=True)
+
+    # If output is the same as input, replace the original file
+    if output_file_path == input_file_path:
+        import shutil
+        shutil.move(temp_output_path, output_file_path)
+        print(f"\nUpdated original file with deduplicated rows.")
+
+    # Calculate and print results
+    end_time = time.time()
+    duration = end_time - start_time
+
+    print("\n--- Deduplication Summary ---")
+    print(f"Time taken: {duration:.2f} seconds")
+    print(f"Total rows processed: {row_count:,}")
+    print(f"Duplicate rows removed: {duplicate_count:,}")
+    print(f"Unique rows remaining: {unique_count:,}")
+    print(f"Deduplicated file saved to: {output_file_path}")
+
+    if duplicate_count == 0:
+        print("No duplicates found - file already contains unique rows only")
+    else:
+        print(f"Removed {duplicate_count:,} duplicate rows ({(duplicate_count / row_count) * 100:.2f}% of total)")
 
 def add_column_to_csv(input_file, output_file, column_name, position):
     """
