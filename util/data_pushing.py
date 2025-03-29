@@ -1,14 +1,38 @@
-import csv
 import pandas as pd
-import hashlib
-import sys
-import time
-from pathlib import Path
-from itertools import islice
-import clickhouse_connect
+import json
 from clickhouse_connect.driver.exceptions import DataError
 from clickhouse_connect.driver.exceptions import ClickHouseError
 
+def handle_nan_for_type(df):
+    """
+    Handles NaN values in a DataFrame based on column data types:
+    - Object (string) columns: Replace NaN with an empty string ('').
+    - Float64 columns: Replace NaN with `pd.NA` (to maintain nullable float behavior).
+    - Int64 columns: Replace NaN with `pd.NA` (as integers cannot have NaN).
+    - DateTime columns: Replace NaN with `pd.NaT` (missing datetime value).
+
+    Parameters:
+        df (pd.DataFrame): The DataFrame to process.
+
+    Returns:
+        pd.DataFrame: The modified DataFrame with NaN values handled accordingly.
+    """
+    print("Handling NaN values...")
+
+    # Handle object columns (replace NaN with empty string)
+    df[df.select_dtypes(include='object').columns] = df[df.select_dtypes(include='object').columns].apply(lambda x: x.fillna(pd.NA).replace('<NA>', pd.NA))
+    df[df.select_dtypes(include='object').columns] = df[df.select_dtypes(include='object').columns].apply(lambda x: x.fillna(pd.NA).replace('nan', pd.NA))
+
+    # Handle float64 columns (replace NaN with 0.0)
+    df[df.select_dtypes(include='Float64').columns] = df[df.select_dtypes(include='Float64').columns].fillna(pd.NA)
+
+    # Handle int64 columns (replace NaN with 0)
+    df[df.select_dtypes(include='Int64').columns] = df[df.select_dtypes(include='Int64').columns].fillna(pd.NA)
+
+    # Handle DateTime columns (replace NaN with pd.NaT)
+    df[df.select_dtypes(include='datetime64[ns]').columns] = df[df.select_dtypes(include='datetime64[ns]').columns].fillna(pd.NaT)
+
+    return df
 
 def find_problematic_rows(df, column, display_df=True, na=False):
     """
@@ -64,6 +88,8 @@ def analyze_type_error(df, client, table):
     except ClickHouseError as e:
         print(f"\n🚨 Error querying table schema for `{table}`: {e}")
 
+
+#TODO: filter duplicates base on the hash_id
 def filter_duplicates(client, table, df):
     """
     Checks for existing rows in ClickHouse for the given DataFrame chunk
@@ -80,6 +106,7 @@ def filter_duplicates(client, table, df):
             original_total_rows: The number of rows in the original DataFrame chunk.
             existing_count: The number of rows that were duplicates.
     """
+    print(f"\nChecking for duplicates in {table}...")
     original_total_rows = len(df)
 
     # Check table row count
@@ -109,73 +136,36 @@ def filter_duplicates(client, table, df):
 
     return df_new, original_total_rows, existing_count
 
-def get_column_names(table):
+def get_table_schema(table_name, file_path):
     """
-    Get the column names of a ClickHouse table
-    :param table: name of the table
-    :return: list of column names
-    """
+    Load schema from JSON file
 
-    if table == "splio_export_tmp":
-        column_names = ['id', 'email', 'first_name', 'last_name', 'language', 'mobile', 'campaign_event_type',
-                    'event_date', 'event_datetime', 'sending_id', 'campaign_id', 'campaign_name', 'campaign_category',
-                    'campaign_operation_code', 'email_subject', 'content_id', 'content_name', 'subscriptions', 'clicked_link',
-                    'unsubscribe_reason', 'identifier', 'civility', 'billing_address_line_1', 'billing_address_line_2', 'billing_postal_code',
-                    'billing_city', 'billing_country', 'date_of_birth', 'parents', 'number_of_children', 'child_1_first_name', 'child_1_gender',
-                    'child_1_date_of_birth', 'child_2_first_name', 'child_2_gender', 'child_2_date_of_birth', 'child_3_first_name', 'child_3_gender',
-                    'child_3_date_of_birth', 'child_4_first_name', 'child_4_gender', 'child_4_date_of_birth', 'child_5_first_name', 'child_5_gender',
-                    'child_5_date_of_birth', 'SML_account_creation_date', 'expected_delivery_date', 'SML_source_entry', 'account_creation_language',
-                    'NL_option', 'NL_registration_date', 'total_orders', 'total_order_amount_eur', 'first_order_date', 'last_order_date',
-                    'segment_user_interview', 'segment_ramp_up', 'segment_ur', 'operation_code_fdp', 'operation_code_churn', 'segment_rfm',
-                    'segment_ur_theclientistheboss', 'currency_of_last_order', 'employee_christmas_code', 'loyalty_operation_country',
-                    'loyalty_operation_october_2022', 'SME_option', 'SME_membership', 'loyalty_operation_march_2023', 'shopping_party_vic',
-                    'SME_membership_date', 'SME_unsubscription_date', 'vouchers_issued_today', 'date_vouchers_issued_today', 'available_vouchers',
-                    'available_points', 'total_vouchers', 'last_voucher_issued_date', 'voucher_expiration_date', 'points_update_date',
-                    'baby_category_all_products', 'child_teen_category_all_products', 'women_category_fashion_accessories_shoes',
-                    'men_category_fashion_accessories_shoes', 'home_category_adult_other_design', 'home_category_adult_furniture',
-                    'adult_care_beauty_category', 'loyalty_operation_march_2024', 'currency_loyalty_operation_march_2024', 'international_mobile',
-                    'first_name_challenge_influence', 'amount_currency_challenge_influence', 'challenge_influence_code', 'challenge_influence_follow_up']
-    
-    return column_names
-
-def get_column_type_names(table):
+    Parameters:
+        table_name: The name of the table (string).
+        file_path: The path to the JSON file containing the schema.
     """
-    Get the column data types of a ClickHouse table
-    :param table: name of the table
-    """
+    with open(file_path, 'r', encoding='utf-8') as f:
+        schema = json.load(f)
 
-    if table == "splio_export_tmp":
-        column_type_names = ['UInt64', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)',
-                                'Nullable(DateTime)', 'Nullable(DateTime)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)',
-                                'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)',
-                                'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)',
-                                'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(Int64)', 'Nullable(String)',
-                                'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)',
-                                'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)',
-                                'Nullable(String)', 'Nullable(String)', 'Nullable(DateTime)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)',
-                                'Nullable(String)', 'Nullable(DateTime)', 'Nullable(Int64)', 'Nullable(Float64)', 'Nullable(DateTime)', 'Nullable(DateTime)',
-                                'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)',
-                                'Nullable(Float64)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(Float64)', 'Nullable(String)',
-                                'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(DateTime)', 'Nullable(DateTime)', 'Nullable(Int64)',
-                                'Nullable(DateTime)', 'Nullable(Int64)', 'Nullable(Int64)', 'Nullable(Int64)', 'Nullable(DateTime)', 'Nullable(DateTime)',
-                                'Nullable(DateTime)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)',
-                                'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)', 'Nullable(String)',
-                                'Nullable(String)', 'Nullable(String)', 'Nullable(String)']
-        
-    return column_type_names
+    print(f"\nLoading schema for table: {table_name}")
+    for table in schema:
+        if table in table_name:
+            return schema[table]
+
+    return {}  # Return empty dict if table not found
 
 
 def insert_new_data(client, table, df, chunk_size=1000):
     """
     Insert new data into ClickHouse table after checking for duplicates.
-    Now returns a tuple: (success_status, number_of_rows_inserted)
+    Returns a tuple: (success_status, number_of_rows_inserted)
     Skips insertion if all data exists and continues processing.
 
     Parameters:
         client: A ClickHouse client instance.
         table: The name of the target ClickHouse table (string).
         df: A Pandas DataFrame containing the data to be inserted. Must include an 'id' column.
-        chunk_size: Number of rows per chunk.
+        chunk_size: Number of rows per chunk (default: 1000).
 
     Returns:
         tuple: (bool, int) - (success status, number of new rows inserted)
@@ -184,49 +174,207 @@ def insert_new_data(client, table, df, chunk_size=1000):
         print("No data available in this chunk.")
         return True, 0
 
-    column_names = get_column_names(table)
-    column_type_names = get_column_type_names(table)
-
-    # Create chunks from the filtered DataFrame
-    total_rows = len(df)
-    num_chunks = total_rows // chunk_size + (1 if total_rows % chunk_size != 0 else 0)
-    chunks = [df.iloc[i * chunk_size: (i + 1) * chunk_size] for i in range(num_chunks)]
-
     print(f"\nInsertion plan:")
     print(f"- Chunk size: {chunk_size}")
-    print(f"- Total new chunks needed: {num_chunks}")
+    print(f"- Total rows to insert: {len(df)}")
 
-    # Insert the chunks into ClickHouse
-    if chunks:
-        first_chunk = chunks[0]
-        try:
-            client.insert_df(table, first_chunk, column_names=column_names, column_type_names=column_type_names)
-            print(f"\n✅ Successfully inserted the first chunk into {table}!")
+    try:
 
-            return True, total_rows
-        
-        except DataError as e:
-            print("\n🚨 DataError encountered while inserting the first chunk!")
-            error_message = str(e)
-            print(error_message)
-            if "for source column `" in error_message:
-                try:
-                    col_name = error_message.split("for source column `")[1].split("`")[0]
-                except Exception:
-                    col_name = "Unknown"
-                print(f"\n🔍 Investigating problematic column: `{col_name}`")
-                find_problematic_rows(df, col_name)
-            return False, 0
-        
-        except TypeError as e:
-            print("\n🚨 TypeError encountered while inserting the first chunk!")
-            error_message = str(e)
-            print(error_message)
-            analyze_type_error(df, client, table)
-            return False, 0
-        
-        except AttributeError as e:
-            print("\n🚨 AttributeError encountered while inserting the first chunk!")
-            error_message = str(e)
-            print(error_message)
-            return False, 0
+        client.insert_df(
+            table=table,
+            df=df,
+        )
+
+        print(f"\nSuccessfully inserted {len(df)} rows into {table}!")
+        return True, len(df)
+
+    except DataError as e:
+        print("\nDataError encountered while inserting!")
+        error_message = str(e)
+        print(error_message)
+        if "for source column " in error_message:
+            try:
+                col_name = error_message.split("for source column ")[1].split("")[0]
+            except Exception:
+                col_name = "Unknown"
+            print(f"\n🔍 Investigating problematic column: {col_name}`")
+            find_problematic_rows(df, col_name)
+        return False, 0
+
+    except TypeError as e:
+        print("\nTypeError encountered while inserting!")
+        error_message = str(e)
+        print(error_message)
+        analyze_type_error(df, client, table)
+        return False, 0
+
+    except AttributeError as e:
+        print("\nAttributeError encountered while inserting!")
+        error_message = str(e)
+        print(error_message)
+        return False, 0
+
+def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=None,
+                         date_columns=None, int_columns=None, float_columns=None,
+                         string_columns=None, dob_columns=None, percentage_columns=None):
+    """
+    Reads a CSV file in chunks, processes each chunk, and inserts data into ClickHouse.
+    Automatically handles encoding issues and ensures data integrity.
+
+    Parameters:
+        client: ClickHouse client instance.
+        table: Target ClickHouse table name.
+        csv_path: Path to the CSV file.
+        chunk_size: Number of rows per chunk (default 10,000).
+        last_id: If None, auto-detects the last ID in the table.
+        date_columns: List of date columns to convert.
+        int_columns: List of integer columns to convert.
+        float_columns: List of float columns to convert.
+        string_columns: List of string columns to convert.
+        dob_columns: List of date-of-birth columns to convert.
+        percentage_columns: List of percentage columns to normalize (e.g., "50%" → 0.5).
+    """
+    print("\n🚀 Starting CSV processing in chunks...")
+
+    # Try UTF-8 first, fall back to latin1 if needed
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            total_rows = sum(1 for _ in f) - 1  # Subtract header
+    except UnicodeDecodeError:
+        with open(csv_path, 'r', encoding='latin1') as f:
+            total_rows = sum(1 for _ in f) - 1
+
+    total_chunks = (total_rows // chunk_size) + (1 if total_rows % chunk_size else 0)
+    print(f"📊 Total rows: {total_rows} | Chunks: {total_chunks}")
+
+    # Initialize stats
+    total_rows_inserted = 0
+    chunks_processed = 0
+    chunks_skipped = 0
+
+    # Auto-detect last_id if not provided
+    if last_id is None:
+        last_id = 0
+    print(f"🆔 Starting IDs from {last_id + 1}")
+
+    # Read CSV with error handling
+    try:
+        chunk_iter = pd.read_csv(
+            csv_path,
+            chunksize=chunk_size,
+            encoding='utf-8',
+        )
+    except UnicodeDecodeError:
+        chunk_iter = pd.read_csv(
+            csv_path,
+            chunksize=chunk_size,
+            encoding='latin1',
+        )
+
+    for current_chunk, df_chunk in enumerate(chunk_iter, 1):
+        print(f"\n📌 Processing chunk {current_chunk}/{total_chunks} ({len(df_chunk)} rows)")
+
+        # Assign incremental IDs
+        df_chunk.insert(0, 'id', range(last_id + 1, last_id + 1 + len(df_chunk)))
+        last_id += len(df_chunk)
+
+        # Skip duplicates
+        df_new, _, existing_count = filter_duplicates(client, table, df_chunk)
+        if len(df_new) == 0:
+            print(f"⏭️ All rows exist. Skipping chunk {current_chunk}.")
+            chunks_skipped += 1
+            continue
+
+        print("Converting data types...")
+        df_new = df_new.astype({col: 'Float64' for col in df_new.select_dtypes(include='float64').columns})
+
+        # Convert date columns
+        for col in date_columns or []:
+            if col in df_new.columns:
+                df_new[col] = pd.to_datetime(df_new[col], errors="coerce")
+
+        # Convert int columns
+        for col in int_columns or []:
+            if col in df_new.columns:
+                df_new[col] = pd.to_numeric(df_new[col], errors="coerce").astype('Int64')
+
+        # Convert float columns
+        for col in float_columns or []:
+            if col in df_new.columns:
+                df_new[col] = pd.to_numeric(df_new[col], errors='coerce').astype('Float64')
+
+        df_new = df_new.astype({col: 'Float64' for col in df_new.select_dtypes(include='float64').columns})
+
+        # Convert string columns
+        for col in string_columns or []:
+            if col in df_new.columns:
+                df_new[col] = df_new[col].astype(str).str.replace(r'\.0$', '', regex=True)
+
+        # Convert date of birth columns
+        for col in dob_columns or []:
+            if col in df_new.columns:
+                df_new[col] = df_new[col].dt.strftime('%Y-%m-%d')
+
+        df_new = handle_nan_for_type(df_new)
+
+        # Insert into ClickHouse
+        success, rows_inserted = insert_new_data(client, table, df_new)
+        if success:
+            total_rows_inserted += rows_inserted
+        else:
+            print(f"🚨 Failed to insert chunk {current_chunk}")
+
+        chunks_processed += 1
+
+    # Final report
+    print("\n📊 Results:")
+    print(f"- Chunks processed: {chunks_processed}/{total_chunks}")
+    print(f"- Chunks skipped (duplicates): {chunks_skipped}")
+    print(f"- Total rows inserted: {total_rows_inserted}")
+    print(f"- Last used ID: {last_id}")
+
+
+def get_last_id(client, clickhouse_table):
+    """
+    Get the last ID from the ClickHouse table.
+
+    Parameters:
+        client: ClickHouse client instance.
+        clickhouse_table: Target ClickHouse table name.
+
+    Returns:
+        int: The last ID in the table.
+    """
+    try:
+        query = f"SELECT MAX(id) FROM {clickhouse_table}"
+        result = client.query(query)
+        last_id = result.first_row[0]
+        print(f"last_id: {last_id}")
+        return last_id
+    except ClickHouseError as e:
+        print(f"Error getting last ID for {clickhouse_table}: {e}")
+        return 0
+
+def update_last_id(client, table_name, file_path):
+    """
+    Update the last_id in the table_schema.json file.
+
+    Parameters:
+        table_name: Name of the table.
+        file_path: Path to the CSV file.
+    """
+
+    with open(file_path, 'r') as f:
+        table_schema = json.load(f)
+
+    for table in table_schema:
+      if table in table_name:
+        clickhouse_table = table_schema[table]["table_name"]
+
+    last_id = get_last_id(client, clickhouse_table)
+    table_schema[table]["last_id"] = last_id
+
+    with open(file_path, 'w') as f:
+        json.dump(table_schema, f, indent=4)
+
+    print(f"last_id updated for {table}")
