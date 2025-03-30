@@ -67,8 +67,8 @@ def main():
     """
     # List all files in the UPLOAD_FOLDER
     uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_UPLOAD_FOLDER)
-    if 'Contents' not in uploaded_files:
-        print("No files found in the upload folder.")
+    if 'Contents' not in uploaded_files or not uploaded_files['Contents']:
+        print("No new files to process. Exiting...")
         return
 
     # Check for new files in the UPLOAD_FOLDER
@@ -92,9 +92,13 @@ def main():
         if filename.endswith('.zip'):
             try:
                 file_path = data_processing.extract_file(file_path, EXTRACTED_FOLDER)
+                if not file_path:
+                    print(f"Extraction failed for {filename}, deleting and stopping...")
+                    os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                    exit(1)
             except Exception as e:
-                print(f"Error extracting {file_path}: {e}")
-                continue
+                print(f"Critical error extracting {filename}: {e}")
+                exit(1)
 
         # Process only CSV files
         if not file_path or not file_path.endswith('.csv'):
@@ -249,7 +253,7 @@ def main():
                 print(f"ERROR: {process_and_insert_result.get('error', 'Unknown error')}")
         except Exception as e:
             print(f"Error inserting {cleaned_file} into ClickHouse: {e}")
-            exit(1)
+            exit(0)
 
         print(f"Successfully uploaded {cleaned_file} to ClickHouse")
 
@@ -272,7 +276,7 @@ def main():
         # Update last_id
         print(f"\nUpdating last_id for {table_name} ...")
         try:
-            update_last_id_result = data_pushing.update_last_id(client, table_name, cleaned_file, TABLE_SCHEMA)
+            update_last_id_result = data_pushing.update_last_id(client, table_name, TABLE_SCHEMA)
             if not update_last_id_result.get('success', True):
                 print(f"ERROR: {update_last_id_result.get('error', 'Unknown error')}")
         except Exception as e:
@@ -299,3 +303,5 @@ def main():
 if __name__ == '__main__':
     print("Starting the file processing script...")
     main()
+    print("File processing completed.")
+    exit(0)
