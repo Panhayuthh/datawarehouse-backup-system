@@ -4,7 +4,7 @@ services:
     image: etl_service_image:latest
     container_name: etl_service_container
     build: .
-    restart: always
+    restart: on-failure
     volumes:
       - type: bind
         source: ./etl_service/data

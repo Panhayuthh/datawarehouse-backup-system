@@ -65,17 +65,19 @@ def main():
     Checks daily for new files, skips already processed ones, and handles deduplication
     both within and across files.
     """
+    print("Starting the file processing script...")
+
     # List all files in the UPLOAD_FOLDER
     uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_UPLOAD_FOLDER)
     if 'Contents' not in uploaded_files or not uploaded_files['Contents']:
         print("No new files to process. Exiting...")
-        return
+        exit(0)
 
     # Check for new files in the UPLOAD_FOLDER
     for obj in uploaded_files['Contents']:
         file_key = obj['Key']
         filename = os.path.basename(file_key)
-    for filename in os.listdir(UPLOAD_FOLDER):
+    # for filename in os.listdir(UPLOAD_FOLDER):
 
         # Skip if not a file or already processed or wrong format
         if filename in processed_files or not filename.endswith(('.csv', '.zip')):
@@ -300,8 +302,9 @@ def main():
         except Exception as e:
             print(f"Error removing original file {file_path}: {e}")
 
-if __name__ == '__main__':
-    print("Starting the file processing script...")
-    main()
+        
     print("File processing completed.")
     exit(0)
+
+if __name__ == '__main__':
+    main()
