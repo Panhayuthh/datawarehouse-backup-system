@@ -9,3 +9,4 @@
 data/
 split_csv.py
 .env
+processed_files.txt

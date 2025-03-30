@@ -89,52 +89,48 @@ def analyze_type_error(df, client, table):
         print(f"\n🚨 Error querying table schema for `{table}`: {e}")
 
 
-#TODO: filter duplicates base on the hash_id
-def filter_duplicates(client, table, df):
+def filter_duplicates(client, table, df, batch_size=1000):
     """
-    Checks for existing rows in ClickHouse for the given DataFrame chunk
-    (based on the 'id' column) and filters out duplicate rows.
-
-    Parameters:
-        client: A ClickHouse client instance.
-        table: The target ClickHouse table name (string).
-        df: A Pandas DataFrame chunk containing an 'id' column.
-
-    Returns:
-        tuple: (df_new, original_total_rows, existing_count)
-            df_new: DataFrame after filtering out rows with existing IDs.
-            original_total_rows: The number of rows in the original DataFrame chunk.
-            existing_count: The number of rows that were duplicates.
+    Efficiently checks for duplicates using batched row_hash comparisons.
     """
     print(f"\nChecking for duplicates in {table}...")
     original_total_rows = len(df)
-
-    # Check table row count
+    
+    # Early exit if the table is empty
     table_count = client.command(f"SELECT COUNT(*) FROM {table}")
-
     if table_count == 0:
-        existing_ids = set()
-        print(f"Table {table} is empty. Processing {original_total_rows} rows.")
-    else:
-        # Get existing IDs only for the current chunk's ID range
-        min_id = df['id'].min()
-        max_id = df['id'].max()
-        existing_ids_query = f"SELECT id FROM {table} WHERE id >= {min_id} AND id <= {max_id}"
-        existing_ids_df = client.query_df(existing_ids_query)
-        existing_ids = set(existing_ids_df['id'].tolist()) if not existing_ids_df.empty else set()
-        print(f"Found {len(existing_ids)} existing IDs in {table}")
-
-    # Filter out duplicates
-    df_new = df[~df['id'].isin(existing_ids)]
+        print(f"Table {table} is empty. Processing all {original_total_rows} rows.")
+    
+    # Extract unique hashes from the dataframe to reduce query size
+    unique_hashes = df['row_hash'].unique().tolist()
+    total_unique_hashes = len(unique_hashes)
+    print(f"Checking {total_unique_hashes} unique hashes against database")
+    
+    # Find existing hashes in batches to manage memory and query size
+    existing_hashes = set()
+    for i in range(0, total_unique_hashes, batch_size):
+        batch = unique_hashes[i:i+batch_size]
+        formatted_hashes = "','".join(batch)
+        query = f"SELECT DISTINCT row_hash FROM {table} WHERE row_hash IN ('{formatted_hashes}')"
+        
+        result = client.query_df(query)
+        if not result.empty:
+            existing_hashes.update(result['row_hash'].tolist())
+        
+        print(f"Processed batch {i//batch_size + 1}/{(total_unique_hashes + batch_size - 1)//batch_size}, "
+              f"found {len(existing_hashes)} duplicates so far")
+    
+    # Filter out rows with existing hashes
+    df_new = df[~df['row_hash'].isin(existing_hashes)]
     new_rows = len(df_new)
     existing_count = original_total_rows - new_rows
-
+    
     print(f"\nDuplicate check results:")
     print(f"- Total rows in chunk: {original_total_rows}")
     print(f"- Existing rows found: {existing_count}")
     print(f"- New rows to insert: {new_rows}")
-
-    return df_new, original_total_rows, existing_count
+    
+    return df_new
 
 def get_table_schema(table_name, file_path):
     """
@@ -213,6 +209,12 @@ def insert_new_data(client, table, df, chunk_size=1000):
         error_message = str(e)
         print(error_message)
         return False, 0
+    
+    except Exception as e:
+        print("\nGeneral error encountered while inserting!")
+        error_message = str(e)
+        print(error_message)
+        return False, 0
 
 def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=None,
                          date_columns=None, int_columns=None, float_columns=None,
@@ -274,16 +276,16 @@ def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=No
     for current_chunk, df_chunk in enumerate(chunk_iter, 1):
         print(f"\n📌 Processing chunk {current_chunk}/{total_chunks} ({len(df_chunk)} rows)")
 
-        # Assign incremental IDs
-        df_chunk.insert(0, 'id', range(last_id + 1, last_id + 1 + len(df_chunk)))
-        last_id += len(df_chunk)
-
         # Skip duplicates
-        df_new, _, existing_count = filter_duplicates(client, table, df_chunk)
+        df_new = filter_duplicates(client, table, df_chunk)
         if len(df_new) == 0:
             print(f"⏭️ All rows exist. Skipping chunk {current_chunk}.")
             chunks_skipped += 1
             continue
+
+        # Assign incremental IDs
+        df_new.insert(0, 'id', range(last_id + 1, last_id + 1 + len(df_new)))
+        last_id += len(df_new)
 
         print("Converting data types...")
         df_new = df_new.astype({col: 'Float64' for col in df_new.select_dtypes(include='float64').columns})
@@ -322,7 +324,10 @@ def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=No
         if success:
             total_rows_inserted += rows_inserted
         else:
-            print(f"🚨 Failed to insert chunk {current_chunk}")
+            return {
+                "success": False,
+                "error": f"Failed to insert chunk {current_chunk}"
+            }
 
         chunks_processed += 1
 
@@ -332,6 +337,14 @@ def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=No
     print(f"- Chunks skipped (duplicates): {chunks_skipped}")
     print(f"- Total rows inserted: {total_rows_inserted}")
     print(f"- Last used ID: {last_id}")
+
+    return {
+        "success": True,
+        "chunks_processed": chunks_processed,
+        "chunks_skipped": chunks_skipped,
+        "total_rows_inserted": total_rows_inserted,
+        "last_id": last_id
+    }
 
 
 def get_last_id(client, clickhouse_table):
@@ -372,9 +385,15 @@ def update_last_id(client, table_name, file_path):
         clickhouse_table = table_schema[table]["table_name"]
 
     last_id = get_last_id(client, clickhouse_table)
-    table_schema[table]["last_id"] = last_id
+    try:
+        table_schema[table]["last_id"] = last_id
+    except KeyError:
+        print(f"Table {table} not found in schema. Adding it.")
+        return {"success": False, "error": f"Table {table} not found in schema."}
 
     with open(file_path, 'w') as f:
         json.dump(table_schema, f, indent=4)
 
     print(f"last_id updated for {table}")
+    
+    return {"success": True, "last_id": last_id}

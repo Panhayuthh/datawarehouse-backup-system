@@ -12,6 +12,7 @@ import chardet
 from collections import Counter
 import json
 from contextlib import ExitStack
+import shutil
 
 def get_rename_columns(table_name, file_path):
     """
@@ -72,7 +73,7 @@ def extract_file(file_path, output_path):
     print(f"File extracted and renamed to {new_file_path}")
     return new_file_path
 
-def detect_delimiter_manual(file_path):
+def detect_delimiter(file_path):
     with open(file_path, 'r') as file:
         first_line = file.readline()
         delimiters = [',', ';', '\t', '|']
@@ -94,78 +95,82 @@ def detect_encoding(file_path, sample_size=100000):
 def rename_column_in_csv(file_path, column_mapping, output_file):
     """
     Rename a column in a CSV file while handling different encodings.
+    Validates that all columns in column_mapping exist in the file.
 
     :param file_path: Path to the CSV file.
     :param column_mapping: Dictionary with {old_column_name: new_column_name}.
     :param output_file: Path to save the output CSV file.
+    :return: Dictionary with success status and additional information.
     """
 
-    # Detect encoding
-    encoding = detect_encoding(file_path)
-    print(f"Detected encoding: {encoding}")
+    # Check if file exists
+    if not os.path.exists(file_path):
+        return {"success": False, "error": f"File not found: {file_path}"}
 
-    # Remove the existing output file if it exists
-    if os.path.exists(output_file):
-        os.remove(output_file)
-        print(f"Old file {output_file} removed!")
+    try:
+        # Detect encoding
+        encoding = detect_encoding(file_path)
+        print(f"Detected encoding: {encoding}")
 
-    # Process the file in chunks
-    for i, chunk in enumerate(pd.read_csv(file_path,
-                                          chunksize=100000,
-                                          dtype=str,
-                                          delimiter=";",
-                                          encoding=encoding,
-                                          )):
-        cleaned_chunk = chunk.rename(columns=column_mapping)
+        # Detect delimiter
+        delimiter = detect_delimiter(file_path)
+        print(f"Detected delimiter: {delimiter}")
 
-        # Save to file (Append after the first write)
-        if i == 0:
-            cleaned_chunk.to_csv(output_file, index=False, mode="w")  # Write with header
-        else:
-            cleaned_chunk.to_csv(output_file, index=False, mode="a", header=False)  # Append without header
+        # First, read just the header to validate columns
+        try:
+            header_df = pd.read_csv(file_path, nrows=0, delimiter=delimiter, encoding=encoding)
+            file_columns = set(header_df.columns)
+            
+            # Check if all columns in the mapping exist in the file
+            columns_to_rename = set(column_mapping.keys())
+            missing_columns = columns_to_rename - file_columns
 
-        print(f"\rChunk {i+1} processed and saved!", end="", flush=True)
+            # if the file column has less columns than the mapping give it a pass
+            if len(file_columns) < len(columns_to_rename):
+                missing_columns = columns_to_rename - file_columns
+                print(f"Warning: The file has less columns than the mapping. Missing columns: {missing_columns}")
+            
+            if missing_columns:
+                missing_cols_str = ", ".join(missing_columns)
+                return {
+                    "success": False, 
+                    "error": f"The following columns to be renamed don't exist in the file: {missing_cols_str}",
+                    "missing_columns": list(missing_columns)
+                }
+                
+            print(f"Header validation successful. All columns to be renamed exist in the file.")
+        except Exception as e:
+            return {"success": False, "error": f"Error reading file header: {str(e)}"}
 
-    print("\nColumn rename completed and saved to:", output_file)
+        # Remove the existing output file if it exists
+        if os.path.exists(output_file):
+            os.remove(output_file)
+            print(f"Old file {output_file} removed!")
 
-def get_row_hash(row):
-    """Create a hash of the row to efficiently compare rows"""
-    return hashlib.md5(str(row).encode()).hexdigest()
+        # Process the file in chunks
+        for i, chunk in enumerate(pd.read_csv(file_path,
+                                              chunksize=100000,
+                                              dtype=str,
+                                              delimiter=delimiter,
+                                              encoding=encoding,
+                                              )):
+            cleaned_chunk = chunk.rename(columns=column_mapping)
 
-def compare_csv_structure(file1_path, file2_path):
-    """
-    Compare the column structure of two CSV files
-    Returns a tuple (columns_match, headers1, headers2)
-    """
-    headers1 = []
-    headers2 = []
+            # Save to file (Append after the first write)
+            if i == 0:
+                cleaned_chunk.to_csv(output_file, index=False, mode="w")  # Write with header
+            else:
+                cleaned_chunk.to_csv(output_file, index=False, mode="a", header=False)  # Append without header
 
-    # Read headers from first file
-    with open(file1_path, 'r', newline='') as f1:
-        reader = csv.reader(f1)
-        headers1 = next(reader)
+            print(f"\rChunk {i+1} processed and saved!", end="", flush=True)
 
-    # Read headers from second file
-    with open(file2_path, 'r', newline='') as f2:
-        reader = csv.reader(f2)
-        headers2 = next(reader)
+        print("\nColumn rename completed and saved to:", output_file)
+        return {"success": True, "output_file": output_file}
+    
+    except Exception as e:
+        print(f"\nError processing file: {e}")
+        return {"success": False, "error": str(e)}
 
-    # Compare column count
-    if len(headers1) != len(headers2):
-        print("\nMISMATCH: Files have different number of columns")
-        return False, headers1, headers2
-
-    # Compare column names
-    column_matches = all(h1 == h2 for h1, h2 in zip(headers1, headers2))
-    if not column_matches:
-        print("\nMISMATCH: Column names differ between files")
-        # Count of mismatched columns
-        mismatch_count = sum(1 for h1, h2 in zip(headers1, headers2) if h1 != h2)
-        print(f"  {mismatch_count} columns have different names")
-    else:
-        print("\nMATCH: Both files have identical column structure")
-
-    return column_matches, headers1, headers2
 
 def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, output_file_path=None, chunk_size=100000):
     """
@@ -186,7 +191,8 @@ def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, o
         comparative_path = Path(comparative_file_path).resolve()
 
         if output_file_path == comparative_path:
-            raise ValueError("Output path cannot be the same as the comparative file path")
+            print("Error: Output file path cannot be the same as comparative file path.")
+            return {"success": False, "error": "Output file path cannot be the same as comparative file path."}
 
     # set max field size limit to maximum
     try:
@@ -199,9 +205,13 @@ def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, o
     file2 = Path(target_file_path)
 
     if not file1.exists():
-        raise FileNotFoundError(f"Comparative file not found: {comparative_file_path}")
+        # raise FileNotFoundError(f"Comparative file not found: {comparative_file_path}")
+        print(f"Error: File doesn't exist: {comparative_file_path}")
+        return {"success": False, "error": "File not found"}
     if not file2.exists():
-        raise FileNotFoundError(f"Target file not found: {target_file_path}")
+        # raise FileNotFoundError(f"Target file not found: {target_file_path}")
+        print(f"Error: File doesn't exist: {target_file_path}")
+        return {"success": False, "error": "File not found"}
 
     # Print file information
     print(f"Starting comparison of files:")
@@ -209,20 +219,44 @@ def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, o
     print(f"Target File: {file2.name} ({file2.stat().st_size / (1024 * 1024):.2f} MB)")
 
     # First check column structure
-    columns_match, headers1, headers2 = compare_csv_structure(comparative_file_path, target_file_path)
-    if not columns_match:
-        print("\nExiting program due to column structure mismatch.")
-        return 0
+    with open(comparative_file_path, 'r', newline='', encoding='utf-8') as f1, \
+         open(target_file_path, 'r', newline='', encoding='utf-8') as f2:
+        reader1 = csv.reader(f1)
+        reader2 = csv.reader(f2)
+
+        try:
+            headers1 = next(reader1)
+            headers2 = next(reader2)
+        except StopIteration:
+            # raise ValueError("One of the files is empty or has no headers.")
+            return {"success": False, "error": "One of the files is empty or has no headers."}
+        if len(headers1) != len(headers2):
+            # raise ValueError("Files have different number of columns.")
+            return {"success": False, "error": "Files have different number of columns."}
+        if headers1 != headers2:
+            # raise ValueError("Files have different column names.")
+            return {"success": False, "error": "Files have different column names."}
+        
+        if "row_hash" not in headers1:
+            # raise ValueError("Comparative file must contain a 'row_hash' column.")
+            return {"success": False, "error": "Comparative file must contain a 'row_hash' column."}
+        if "row_hash" not in headers2:
+            # raise ValueError("Target file must contain a 'row_hash' column.")
+            return {"success": False, "error": "Target file must contain a 'row_hash' column."}
+
+        print("Column structure matches between files.")
+
+    hash_index1 = headers1.index("row_hash")
+    hash_index2 = headers2.index("row_hash")
 
     # Generate hash set from comparative file
-    print("Generating hash set from comparative file...")
+    print("extracting hash from comparative file...")
     row_hashes = set()
-    row_count_file1 = 0
+    row_count_file1 = 1
 
     with open(comparative_file_path, 'r', newline='', encoding='utf-8') as f1:
         reader = csv.reader(f1)
         headers1 = next(reader)
-        row_count_file1 += 1
 
         while True:
             chunk = list(islice(reader, chunk_size))
@@ -230,13 +264,15 @@ def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, o
                 break
 
             for row in chunk:
-                row_hash = hashlib.md5(str(row).encode()).hexdigest()
-                row_hashes.add(row_hash)
+                if len(row) > hash_index1:
+                    row_hash = row[hash_index1]
+                    row_hashes.add(row_hash)
                 row_count_file1 += 1
 
             print(f"\rProcessed {row_count_file1:,} rows from comparative file...", end="", flush=True)
 
     print(f"\nCompleted processing {row_count_file1:,} rows from comparative file.")
+    print(f"Collected {len(row_hashes):,} unique hash_ids.")
 
     # Process target file
     print("Processing target file for unique rows...")
@@ -264,18 +300,19 @@ def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, o
         with open(target_file_path, 'r', newline='', encoding='utf-8') as f2:
             reader = csv.reader(f2)
             headers2 = next(reader)
-            row_count_file2 += 1
 
             for row in reader:
-                row_hash = hashlib.md5(str(row).encode()).hexdigest()
                 row_count_file2 += 1
 
-                if row_hash not in row_hashes:
-                    if writer:
-                        writer.writerow(row)
-                    unique_rows += 1
-                else:
-                    duplicate_count += 1
+                if len(row) > hash_index2:
+                    row_hash = row[hash_index2]
+
+                    if row_hash not in row_hashes:
+                        if writer:
+                            writer.writerow(row)
+                        unique_rows += 1
+                    else:
+                        duplicate_count += 1
 
                 if row_count_file2 % 100000 == 0:
                     print(f"\rProcessed {row_count_file2:,} rows from target file...", end="", flush=True)
@@ -294,6 +331,13 @@ def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, o
     if output_file_path:
         print(f"\nDeduplicated output saved to: {output_file_path}")
 
+    return {
+        "success": True,
+        "output_file": output_file_path,
+        "duplicates_removed": duplicate_count,
+        "unique_rows": unique_rows
+    }
+
 
 def self_deduplicate_csv(input_file_path, output_file_path=None, chunk_size=100000):
     """
@@ -304,9 +348,6 @@ def self_deduplicate_csv(input_file_path, output_file_path=None, chunk_size=1000
     output_file_path (str, optional): Path to save deduplicated rows. If None, will create a new file with "_deduplicated" suffix.
     chunk_size (int, optional): Number of rows to process in memory at a time
     preserve_order (bool, optional): Whether to preserve the original order of rows (first occurrence kept)
-
-    Returns:
-    dict: A dictionary containing statistics about the deduplication process
     """
 
     start_time = time.time()
@@ -361,7 +402,8 @@ def self_deduplicate_csv(input_file_path, output_file_path=None, chunk_size=1000
         # Read and write headers
         try:
             headers = next(reader)
-            writer.writerow(headers)
+            new_headers = headers + ['row_hash']
+            writer.writerow(new_headers)
             row_count += 1
             unique_count += 1
         except StopIteration:
@@ -378,7 +420,7 @@ def self_deduplicate_csv(input_file_path, output_file_path=None, chunk_size=1000
             # Check if this is a duplicate
             if row_hash not in row_hashes:
                 # Write to output file
-                writer.writerow(row)
+                writer.writerow(row + [row_hash])
                 row_hashes.add(row_hash)
                 unique_count += 1
             else:
@@ -390,7 +432,7 @@ def self_deduplicate_csv(input_file_path, output_file_path=None, chunk_size=1000
 
     # If output is the same as input, replace the original file
     if output_file_path == input_file_path:
-        import shutil
+
         shutil.move(temp_output_path, output_file_path)
         print(f"\nUpdated original file with deduplicated rows.")
 
@@ -409,6 +451,8 @@ def self_deduplicate_csv(input_file_path, output_file_path=None, chunk_size=1000
         print("No duplicates found - file already contains unique rows only")
     else:
         print(f"Removed {duplicate_count:,} duplicate rows ({(duplicate_count / row_count) * 100:.2f}% of total)")
+
+    return {"success": True, "output_file": output_file_path, "duplicates_removed": duplicate_count}
 
 def add_column_to_csv(input_file, output_file, column_name, position):
     """
@@ -448,3 +492,5 @@ def add_column_to_csv(input_file, output_file, column_name, position):
     duration = end_time - start_time
     print(f"Column added in {duration:.2f} seconds.")
     print(f"Column '{column_name}' added at position {position} in '{output_file}'.")
+
+    return {"success": True, "output_file": output_file}

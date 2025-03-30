@@ -1,2 +1,5 @@
 data/
+important/
 .env
+.git/
+.gitignore
