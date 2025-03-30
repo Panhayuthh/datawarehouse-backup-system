@@ -89,47 +89,50 @@ def analyze_type_error(df, client, table):
         print(f"\n🚨 Error querying table schema for `{table}`: {e}")
 
 
-def filter_duplicates(client, table, df, batch_size=1000):
+def prevent_id_duplicate(client, table, df):
     """
-    Efficiently checks for duplicates using batched row_hash comparisons.
+    Checks for existing rows in ClickHouse for the given DataFrame chunk
+    (based on the 'id' column) and filters out duplicate rows.
+
+    Parameters:
+        client: A ClickHouse client instance.
+        table: The target ClickHouse table name (string).
+        df: A Pandas DataFrame chunk containing an 'id' column.
+
+    Returns:
+        tuple: (df_new, original_total_rows, existing_count)
+            df_new: DataFrame after filtering out rows with existing IDs.
+            original_total_rows: The number of rows in the original DataFrame chunk.
+            existing_count: The number of rows that were duplicates.
     """
     print(f"\nChecking for duplicates in {table}...")
     original_total_rows = len(df)
-    
-    # Early exit if the table is empty
+
+    # Check table row count
     table_count = client.command(f"SELECT COUNT(*) FROM {table}")
+
     if table_count == 0:
-        print(f"Table {table} is empty. Processing all {original_total_rows} rows.")
-    
-    # Extract unique hashes from the dataframe to reduce query size
-    unique_hashes = df['row_hash'].unique().tolist()
-    total_unique_hashes = len(unique_hashes)
-    print(f"Checking {total_unique_hashes} unique hashes against database")
-    
-    # Find existing hashes in batches to manage memory and query size
-    existing_hashes = set()
-    for i in range(0, total_unique_hashes, batch_size):
-        batch = unique_hashes[i:i+batch_size]
-        formatted_hashes = "','".join(batch)
-        query = f"SELECT DISTINCT row_hash FROM {table} WHERE row_hash IN ('{formatted_hashes}')"
-        
-        result = client.query_df(query)
-        if not result.empty:
-            existing_hashes.update(result['row_hash'].tolist())
-        
-        print(f"Processed batch {i//batch_size + 1}/{(total_unique_hashes + batch_size - 1)//batch_size}, "
-              f"found {len(existing_hashes)} duplicates so far")
-    
-    # Filter out rows with existing hashes
-    df_new = df[~df['row_hash'].isin(existing_hashes)]
+        existing_ids = set()
+        print(f"Table {table} is empty. Processing {original_total_rows} rows.")
+    else:
+        # Get existing IDs only for the current chunk's ID range
+        min_id = df['id'].min()
+        max_id = df['id'].max()
+        existing_ids_query = f"SELECT id FROM {table} WHERE id >= {min_id} AND id <= {max_id}"
+        existing_ids_df = client.query_df(existing_ids_query)
+        existing_ids = set(existing_ids_df['id'].tolist()) if not existing_ids_df.empty else set()
+        print(f"Found {len(existing_ids)} existing IDs in {table}")
+
+    # Filter out duplicates
+    df_new = df[~df['id'].isin(existing_ids)]
     new_rows = len(df_new)
     existing_count = original_total_rows - new_rows
-    
+
     print(f"\nDuplicate check results:")
     print(f"- Total rows in chunk: {original_total_rows}")
     print(f"- Existing rows found: {existing_count}")
     print(f"- New rows to insert: {new_rows}")
-    
+
     return df_new
 
 def get_table_schema(table_name, file_path):
@@ -151,7 +154,7 @@ def get_table_schema(table_name, file_path):
     return {}  # Return empty dict if table not found
 
 
-def insert_new_data(client, table, df, chunk_size=1000):
+def insert_new_data(client, table, df, column_names, column_type_names):
     """
     Insert new data into ClickHouse table after checking for duplicates.
     Returns a tuple: (success_status, number_of_rows_inserted)
@@ -161,7 +164,6 @@ def insert_new_data(client, table, df, chunk_size=1000):
         client: A ClickHouse client instance.
         table: The name of the target ClickHouse table (string).
         df: A Pandas DataFrame containing the data to be inserted. Must include an 'id' column.
-        chunk_size: Number of rows per chunk (default: 1000).
 
     Returns:
         tuple: (bool, int) - (success status, number of new rows inserted)
@@ -171,7 +173,6 @@ def insert_new_data(client, table, df, chunk_size=1000):
         return True, 0
 
     print(f"\nInsertion plan:")
-    print(f"- Chunk size: {chunk_size}")
     print(f"- Total rows to insert: {len(df)}")
 
     try:
@@ -179,6 +180,8 @@ def insert_new_data(client, table, df, chunk_size=1000):
         client.insert_df(
             table=table,
             df=df,
+            column_names=column_names,
+            column_type_names=column_type_names,
         )
 
         print(f"\nSuccessfully inserted {len(df)} rows into {table}!")
@@ -218,7 +221,8 @@ def insert_new_data(client, table, df, chunk_size=1000):
 
 def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=None,
                          date_columns=None, int_columns=None, float_columns=None,
-                         string_columns=None, dob_columns=None, percentage_columns=None):
+                         string_columns=None, dob_columns=None,
+                         column_names=None, column_type_names=None,):
     """
     Reads a CSV file in chunks, processes each chunk, and inserts data into ClickHouse.
     Automatically handles encoding issues and ensures data integrity.
@@ -234,7 +238,6 @@ def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=No
         float_columns: List of float columns to convert.
         string_columns: List of string columns to convert.
         dob_columns: List of date-of-birth columns to convert.
-        percentage_columns: List of percentage columns to normalize (e.g., "50%" → 0.5).
     """
     print("\n🚀 Starting CSV processing in chunks...")
 
@@ -276,16 +279,16 @@ def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=No
     for current_chunk, df_chunk in enumerate(chunk_iter, 1):
         print(f"\n📌 Processing chunk {current_chunk}/{total_chunks} ({len(df_chunk)} rows)")
 
+        # Assign incremental IDs
+        df_chunk.insert(0, 'id', range(last_id + 1, last_id + 1 + len(df_chunk)))
+        last_id += len(df_chunk)
+
         # Skip duplicates
-        df_new = filter_duplicates(client, table, df_chunk)
+        df_new = prevent_id_duplicate(client, table, df_chunk)
         if len(df_new) == 0:
             print(f"⏭️ All rows exist. Skipping chunk {current_chunk}.")
             chunks_skipped += 1
             continue
-
-        # Assign incremental IDs
-        df_new.insert(0, 'id', range(last_id + 1, last_id + 1 + len(df_new)))
-        last_id += len(df_new)
 
         print("Converting data types...")
         df_new = df_new.astype({col: 'Float64' for col in df_new.select_dtypes(include='float64').columns})
@@ -320,7 +323,7 @@ def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=No
         df_new = handle_nan_for_type(df_new)
 
         # Insert into ClickHouse
-        success, rows_inserted = insert_new_data(client, table, df_new)
+        success, rows_inserted = insert_new_data(client, table, df_new, column_names, column_type_names)
         if success:
             total_rows_inserted += rows_inserted
         else:

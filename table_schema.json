@@ -95,7 +95,9 @@
     "first_name_challenge_influence",
     "amount_currency_challenge_influence",
     "challenge_influence_code",
-    "challenge_influence_follow_up"],
+    "challenge_influence_follow_up",
+    "row_hash"
+  ],
     "column_types": [
       "UInt64",
       "Nullable(String)",
@@ -194,7 +196,8 @@
       "Nullable(String)",
       "Nullable(String)",
       "Nullable(String)",
-      "Nullable(String)"
+      "Nullable(String)",
+      "String"
     ],
     "date_columns": [
       "event_date",
@@ -403,7 +406,8 @@
       "first_name_challenge_influence",
       "amount_currency_challenge_influence",
       "challenge_influence_code",
-      "challenge_influence_follow_up"
+      "challenge_influence_follow_up",
+      "row_hash"
     ],
     "column_types": [
       "UInt64",
@@ -413,12 +417,12 @@
       "Nullable(String)",
       "Nullable(String)",
       "Nullable(DateTime)",
-      "Float64",
-      "String",
+      "Nullable(Float64)",
+      "Nullable(String)",
       "Nullable(Float64)",
       "Nullable(Float64)",
-      "Float64",
-      "Float64",
+      "Nullable(Float64)",
+      "Nullable(Float64)",
       "Nullable(String)",
       "Nullable(String)",
       "Nullable(String)",
@@ -463,10 +467,6 @@
       "Nullable(String)",
       "Nullable(String)",
       "Nullable(String)",
-      "Nullable(String)",
-      "Nullable(String)",
-      "Nullable(String)",
-      "Nullable(Float64)",
       "Nullable(String)",
       "Nullable(String)",
       "Nullable(String)",
@@ -474,6 +474,10 @@
       "Nullable(String)",
       "Nullable(String)",
       "Nullable(String)",
+      "Nullable(Float64)",
+      "Nullable(String)",
+      "Nullable(String)",
+      "Nullable(String)",
       "Nullable(String)",
       "Nullable(DateTime)",
       "Nullable(DateTime)",
@@ -498,7 +502,8 @@
       "Nullable(String)",
       "Nullable(String)",
       "Nullable(String)",
-      "Nullable(String)"
+      "Nullable(String)",
+      "String"
     ],
     "date_columns": [
       "date",

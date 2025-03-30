@@ -32,7 +32,8 @@ client = clickhouse_connect.get_client(host=CLICKHOUSE_HOST, port=8443, database
 AWS_BUCKET = os.getenv('AWS_BUCKET')
 AWS_ACCESS_KEY = os.getenv('AWS_ACCESS_KEY')
 AWS_SECRET_KEY = os.getenv('AWS_SECRET_KEY')
-S3_FOLDER = 'uploads/'
+S3_UPLOAD_FOLDER = 'uploads/'
+S3_PROCESSED_FOLDER = 'processed/'
 
 s3_client = boto3.client(
     "s3",
@@ -65,15 +66,15 @@ def main():
     both within and across files.
     """
     # List all files in the UPLOAD_FOLDER
-    # uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_FOLDER)
-    # if 'Contents' not in uploaded_files:
-    #     print("No files found in the upload folder.")
-    #     return
+    uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_UPLOAD_FOLDER)
+    if 'Contents' not in uploaded_files:
+        print("No files found in the upload folder.")
+        return
 
     # Check for new files in the UPLOAD_FOLDER
-    # for obj in uploaded_files['Contents']:
-    #     file_key = obj['Key']
-    #     filename = os.path.basename(file_key)
+    for obj in uploaded_files['Contents']:
+        file_key = obj['Key']
+        filename = os.path.basename(file_key)
     for filename in os.listdir(UPLOAD_FOLDER):
 
         # Skip if not a file or already processed or wrong format
@@ -82,8 +83,8 @@ def main():
             continue
 
         file_path = os.path.join(UPLOAD_FOLDER, filename)
-        # print(f"Downloading {filename} to {UPLOAD_FOLDER}...")
-        # s3_client.download_file(AWS_BUCKET, file_key, file_path)
+        print(f"Downloading {filename} to {UPLOAD_FOLDER}...")
+        s3_client.download_file(AWS_BUCKET, file_key, file_path)
 
         print(f"\nProcessing file: {file_path}")
 
@@ -147,13 +148,13 @@ def main():
             current_columns = next(reader)  # Get header row
 
         # Add missing columns
-        if len(current_columns) + 1 != len(expected_columns): # +1 for 'id' column
-            print(f"Column count mismatch: {len(current_columns)} found, {len(expected_columns)} expected. Adding missing columns...")
+        if len(current_columns) + 2 != len(expected_columns): # +2 for 'id' column and 'row_hash' column
+            print(f"Column count mismatch: {len(current_columns) + 2} found, {len(expected_columns)} expected. Adding missing columns...")
         else:
-            print(f"Column count matches: {len(current_columns) + 1} found, {len(expected_columns)} expected.")
+            print(f"Column count matches: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
 
         for column_name in expected_columns:
-            if column_name not in current_columns and column_name != 'id':
+            if column_name not in current_columns and column_name != 'id' and column_name != 'row_hash':
                 position = expected_columns.index(column_name)
                 print(f"Adding missing column {column_name} to {cleaned_file}...")
                 temp_file = f"{os.path.splitext(cleaned_file)[0]}.temp.csv"
@@ -225,6 +226,8 @@ def main():
         float_columns = table_schema.get("float_columns", [])
         string_columns = table_schema.get("string_columns", [])
         dob_columns = table_schema.get("dob_columns", [])
+        column_names = table_schema.get("column_names", [])
+        column_types = table_schema.get("column_types", [])
 
         print(f"Pushing {cleaned_file} to ClickHouse...")
         try:
@@ -238,18 +241,33 @@ def main():
                 int_columns=int_columns,
                 float_columns=float_columns,
                 string_columns=string_columns,
-                dob_columns=dob_columns
+                dob_columns=dob_columns,
+                column_names=column_names,
+                column_type_names=column_types,
             )
             if not process_and_insert_result.get('success', True):
                 print(f"ERROR: {process_and_insert_result.get('error', 'Unknown error')}")
         except Exception as e:
             print(f"Error inserting {cleaned_file} into ClickHouse: {e}")
-            continue
+            exit(1)
 
         print(f"Successfully uploaded {cleaned_file} to ClickHouse")
 
         # Move the processed file to the processed folder in S3
-        
+        try:
+            # Ensure the folder structure exists in S3 before uploading
+            try:
+                s3_client.put_object(Bucket=AWS_BUCKET, Key=f"{S3_PROCESSED_FOLDER}/{table_name}/")
+            except Exception as e:
+                print(f"Error creating folder structure in S3: {e}")
+                continue
+
+            # Upload the file to S3
+            s3_client.upload_file(cleaned_file, AWS_BUCKET, f"{S3_PROCESSED_FOLDER}/{table_name}/{os.path.basename(cleaned_file)}")
+            print(f"Uploaded {cleaned_file} to S3 bucket {AWS_BUCKET}/{S3_PROCESSED_FOLDER}")
+        except Exception as e:
+            print(f"Error uploading {cleaned_file} to S3: {e}")
+            continue
 
         # Update last_id
         print(f"\nUpdating last_id for {table_name} ...")
@@ -260,6 +278,23 @@ def main():
         except Exception as e:
             print(f"Error updating last_id: {e}")
             continue
+
+        # check if the local storage is more than 20GB, if so, remove the oldest file
+        total_size = sum(os.path.getsize(f) for f in os.listdir(PROCESSED_FOLDER) if os.path.isfile(f))
+        if total_size > 20 * 1024 * 1024 * 1024:
+            oldest_file = min(
+                (os.path.join(PROCESSED_FOLDER, f) for f in os.listdir(PROCESSED_FOLDER)),
+                key=os.path.getctime
+            )
+            os.remove(oldest_file)
+            print(f"Removed oldest file {oldest_file} to free up space.")
+
+        # Remove the original file after processing
+        try:
+            os.remove(file_path)
+            print(f"Removed original file {file_path} after processing.")
+        except Exception as e:
+            print(f"Error removing original file {file_path}: {e}")
 
 if __name__ == '__main__':
     print("Starting the file processing script...")
