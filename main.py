@@ -71,7 +71,7 @@ def main():
     uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_UPLOAD_FOLDER)
     if 'Contents' not in uploaded_files or not uploaded_files['Contents']:
         print("No new files to process. Exiting...")
-        exit(0)
+        return
 
     # Check for new files in the UPLOAD_FOLDER
     for obj in uploaded_files['Contents']:
@@ -255,7 +255,7 @@ def main():
                 print(f"ERROR: {process_and_insert_result.get('error', 'Unknown error')}")
         except Exception as e:
             print(f"Error inserting {cleaned_file} into ClickHouse: {e}")
-            exit(0)
+            return
 
         print(f"Successfully uploaded {cleaned_file} to ClickHouse")
 
@@ -304,7 +304,9 @@ def main():
 
         
     print("File processing completed.")
-    exit(0)
+    return
 
 if __name__ == '__main__':
-    main()
+    while True:
+        main()
+        time.sleep(24 * 60 * 60)  # Sleep for 24 hours before checking again
