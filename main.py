@@ -51,6 +51,7 @@ if not os.path.exists(PROCESSED_FOLDER):
 
 # Create folders if they don't exist
 if not os.path.exists(PROCESSED_FILES):
+    print(f"Creating {PROCESSED_FILES} file...")
     open(PROCESSED_FILES, 'w').close()
 
 with open(PROCESSED_FILES, 'r') as f:
@@ -64,15 +65,16 @@ def main():
     both within and across files.
     """
     # List all files in the UPLOAD_FOLDER
-    uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_FOLDER)
-    if 'Contents' not in uploaded_files:
-        print("No files found in the upload folder.")
-        return
+    # uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_FOLDER)
+    # if 'Contents' not in uploaded_files:
+    #     print("No files found in the upload folder.")
+    #     return
 
     # Check for new files in the UPLOAD_FOLDER
-    for obj in uploaded_files['Contents']:
-        file_key = obj['Key']
-        filename = os.path.basename(file_key)
+    # for obj in uploaded_files['Contents']:
+    #     file_key = obj['Key']
+    #     filename = os.path.basename(file_key)
+    for filename in os.listdir(UPLOAD_FOLDER):
 
         # Skip if not a file or already processed or wrong format
         if filename in processed_files or not filename.endswith(('.csv', '.zip')):
@@ -80,8 +82,8 @@ def main():
             continue
 
         file_path = os.path.join(UPLOAD_FOLDER, filename)
-        print(f"Downloading {filename} to {UPLOAD_FOLDER}...")
-        s3_client.download_file(AWS_BUCKET, file_key, file_path)
+        # print(f"Downloading {filename} to {UPLOAD_FOLDER}...")
+        # s3_client.download_file(AWS_BUCKET, file_key, file_path)
 
         print(f"\nProcessing file: {file_path}")
 
@@ -124,7 +126,14 @@ def main():
 
         # Rename columns
         print(f"\nRenaming columns in {file_path}...")
-        data_processing.rename_column_in_csv(file_path, column_names, cleaned_file)
+        try:
+            rename_result = data_processing.rename_column_in_csv(file_path, column_names, cleaned_file)
+            if not rename_result.get('success', True):
+                print(f"ERROR: {rename_result.get('error', 'Unknown error')}")
+                continue
+        except Exception as e:
+            print(f"Error renaming columns: {e}")
+            continue
 
         # Check for missing columns
         print(f"\nChecking for missing columns in {cleaned_file}...")
@@ -138,17 +147,35 @@ def main():
             current_columns = next(reader)  # Get header row
 
         # Add missing columns
+        if len(current_columns) + 1 != len(expected_columns): # +1 for 'id' column
+            print(f"Column count mismatch: {len(current_columns)} found, {len(expected_columns)} expected. Adding missing columns...")
+        else:
+            print(f"Column count matches: {len(current_columns) + 1} found, {len(expected_columns)} expected.")
+
         for column_name in expected_columns:
             if column_name not in current_columns and column_name != 'id':
                 position = expected_columns.index(column_name)
                 print(f"Adding missing column {column_name} to {cleaned_file}...")
                 temp_file = f"{os.path.splitext(cleaned_file)[0]}.temp.csv"
-                data_processing.add_column_to_csv(cleaned_file, temp_file, column_name, position)
+                try:
+                    add_column_result = data_processing.add_column_to_csv(cleaned_file, temp_file, column_name, position)
+                    if not add_column_result.get('success', True):
+                        print(f"ERROR: {add_column_result.get('error', 'Unknown error')}")
+                        continue
+                except Exception as e:
+                    print(f"Error adding column {column_name}: {e}")
+                    continue
                 shutil.move(temp_file, cleaned_file)
 
         # Remove duplicates within the file
         print(f"\nChecking for duplicates in {cleaned_file}...")
-        data_processing.self_deduplicate_csv(cleaned_file, cleaned_file)
+        try:
+            self_deduplicate_result = data_processing.self_deduplicate_csv(cleaned_file, cleaned_file)
+            if not self_deduplicate_result.get('success', True):
+                print(f"ERROR: {self_deduplicate_result.get('error', 'Unknown error')}")
+        except Exception as e:
+            print(f"Error during deduplication: {e}")
+            continue
 
         # Mark file as processed
         with open(PROCESSED_FILES, "a") as f:
@@ -173,11 +200,15 @@ def main():
                     # Create a new dedup filename
                     dedup_file_path = os.path.join(table_processed_folder, f"dedup_{os.path.basename(cleaned_file)}")
 
-                    data_processing.compare_and_deduplicate_csv_files(
+                    compare_and_deduplicate_result = data_processing.compare_and_deduplicate_csv_files(
                         prev_file_path,
                         cleaned_file,
                         dedup_file_path
                     )
+
+                    if not compare_and_deduplicate_result.get('success', True):
+                        print(f"ERROR: {compare_and_deduplicate_result.get('error', 'Unknown error')}")
+                        continue
 
                     # Then optionally replace the cleaned file if needed
                     shutil.move(dedup_file_path, cleaned_file)
@@ -196,30 +227,40 @@ def main():
         dob_columns = table_schema.get("dob_columns", [])
 
         print(f"Pushing {cleaned_file} to ClickHouse...")
-        data_pushing.process_and_insert_csv(
-            client,
-            table_name,
-            cleaned_file,
-            chunk_size=10000,
-            last_id=last_id,
-            date_columns=date_columns,
-            int_columns=int_columns,
-            float_columns=float_columns,
-            string_columns=string_columns,
-            dob_columns=dob_columns
-        )
+        try:
+            process_and_insert_result = data_pushing.process_and_insert_csv(
+                client,
+                table_name,
+                cleaned_file,
+                chunk_size=10000,
+                last_id=last_id,
+                date_columns=date_columns,
+                int_columns=int_columns,
+                float_columns=float_columns,
+                string_columns=string_columns,
+                dob_columns=dob_columns
+            )
+            if not process_and_insert_result.get('success', True):
+                print(f"ERROR: {process_and_insert_result.get('error', 'Unknown error')}")
+        except Exception as e:
+            print(f"Error inserting {cleaned_file} into ClickHouse: {e}")
+            continue
+
         print(f"Successfully uploaded {cleaned_file} to ClickHouse")
+
+        # Move the processed file to the processed folder in S3
+        
 
         # Update last_id
         print(f"\nUpdating last_id for {table_name} ...")
-        data_pushing.update_last_id(client, raw_file_name, TABLE_SCHEMA)
-
-
+        try:
+            update_last_id_result = data_pushing.update_last_id(client, table_name, cleaned_file, TABLE_SCHEMA)
+            if not update_last_id_result.get('success', True):
+                print(f"ERROR: {update_last_id_result.get('error', 'Unknown error')}")
+        except Exception as e:
+            print(f"Error updating last_id: {e}")
+            continue
 
 if __name__ == '__main__':
-    while True:
-        print("checking for new files...")
-        main()
-        time.sleep(30)
-        # sleep for 24 hours
-        # time.sleep(86400)
+    print("Starting the file processing script...")
+    main()
