@@ -72,9 +72,6 @@ if not os.path.exists(PROCESSED_FOLDER):
 # with open(PROCESSED_FILES, 'r') as f:
 #     processed_files = set(f.read().splitlines())
 
-query = data_pushing.query_processed_files(pg_conn)
-processed_files = set([file[0] for file in query])
-
 def main():
     """
     Process files in the UPLOAD_FOLDER and save processed files in table-specific subfolders
@@ -83,6 +80,9 @@ def main():
     both within and across files.
     """
     print("Starting the file processing script...")
+
+    query = data_pushing.query_processed_files(pg_conn)
+    processed_files = set([file[0] for file in query])
 
     # List all files in the UPLOAD_FOLDER
     uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_UPLOAD_FOLDER)
