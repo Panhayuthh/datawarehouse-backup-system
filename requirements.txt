@@ -3,4 +3,4 @@ chardet==5.2.0
 clickhouse-connect==0.8.15
 boto3==1.37.23
 dotenv==0.9.9
-pycopg2==2.9.10
+psycopg2==2.9.10
