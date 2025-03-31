@@ -41,6 +41,20 @@ s3_client = boto3.client(
     aws_secret_access_key=AWS_SECRET_KEY,
 )
 
+DATABASE_HOST = os.getenv('DATABASE_HOST')
+DATABASE_PORT = os.getenv('DATABASE_PORT')
+DATABASE_NAME = os.getenv('DATABASE_NAME')
+DATABASE_USERNAME = os.getenv('DATABASE_USERNAME')
+DATABASE_PASSWORD = os.getenv('DATABASE_PASSWORD')
+
+pg_conn = data_pushing.get_postgres_connection(
+    host=DATABASE_HOST,
+    port=DATABASE_PORT,
+    database=DATABASE_NAME,
+    user=DATABASE_USERNAME,
+    password=DATABASE_PASSWORD
+)
+
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
@@ -51,12 +65,15 @@ if not os.path.exists(PROCESSED_FOLDER):
     os.makedirs(PROCESSED_FOLDER)
 
 # Create folders if they don't exist
-if not os.path.exists(PROCESSED_FILES):
-    print(f"Creating {PROCESSED_FILES} file...")
-    open(PROCESSED_FILES, 'w').close()
+# if not os.path.exists(PROCESSED_FILES):
+#     print(f"Creating {PROCESSED_FILES} file...")
+#     open(PROCESSED_FILES, 'w').close()
 
-with open(PROCESSED_FILES, 'r') as f:
-    processed_files = set(f.read().splitlines())
+# with open(PROCESSED_FILES, 'r') as f:
+#     processed_files = set(f.read().splitlines())
+
+query = data_pushing.query_processed_files(pg_conn)
+processed_files = set([file[0] for file in query])
 
 def main():
     """
@@ -97,14 +114,28 @@ def main():
                 if not file_path:
                     print(f"Extraction failed for {filename}, deleting and stopping...")
                     os.remove(os.path.join(UPLOAD_FOLDER, filename))
-                    exit(1)
+                    if pg_conn:
+                        data_pushing.insert_processed_file(pg_conn, filename, 'extraction failed')
+    
+                    os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                    print("logging the error in the database and exiting...")
+                    continue
             except Exception as e:
                 print(f"Critical error extracting {filename}: {e}")
-                exit(1)
+                if pg_conn:
+                    data_pushing.insert_processed_file(pg_conn, filename, 'critical extraction error')
+
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                print("logging the error in the database and exiting...")
+                continue
 
         # Process only CSV files
         if not file_path or not file_path.endswith('.csv'):
             print(f"Skipping: {file_path} is not a valid CSV file after extraction")
+            if pg_conn:
+                data_pushing.insert_processed_file(pg_conn, filename, 'not a valid CSV file')
+            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            print("logging the error in the database and exiting...")
             continue
 
         # Get base table name from filename
@@ -114,6 +145,10 @@ def main():
         table_schema = data_pushing.get_table_schema(table_name=raw_file_name, file_path=TABLE_SCHEMA)
         if not table_schema:
             print(f"No schema found for table {raw_file_name}, skipping...")
+            if pg_conn:
+                data_pushing.insert_processed_file(pg_conn, filename, 'no schema found')
+            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            print("logging the error in the database and exiting...")
             continue
 
         # Use table name from schema or fallback to raw filename
@@ -129,6 +164,11 @@ def main():
         column_names = data_processing.get_rename_columns(table_name=raw_file_name, file_path=RENAME_MAPPING)
         if not column_names:
             print(f"No column mapping found for {raw_file_name}, skipping...")
+            if pg_conn:
+                data_pushing.insert_processed_file(pg_conn, filename, 'no column mapping found')
+            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            os.remove(cleaned_file)
+            print("logging the error in the database and exiting...")
             continue
 
         # Rename columns
@@ -137,9 +177,20 @@ def main():
             rename_result = data_processing.rename_column_in_csv(file_path, column_names, cleaned_file)
             if not rename_result.get('success', True):
                 print(f"ERROR: {rename_result.get('error', 'Unknown error')}")
+                if pg_conn:
+                    data_pushing.insert_processed_file(pg_conn, filename, 'rename error')
+
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                os.remove(cleaned_file)
+                print("logging the error in the database and exiting...")
                 continue
         except Exception as e:
             print(f"Error renaming columns: {e}")
+            if pg_conn:
+                data_pushing.insert_processed_file(pg_conn, filename, 'critical rename error')
+            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            os.remove(cleaned_file)
+            print("logging the error in the database and exiting...")
             continue
 
         # Check for missing columns
@@ -156,6 +207,12 @@ def main():
         # Add missing columns
         if len(current_columns) + 2 != len(expected_columns): # +2 for 'id' column and 'row_hash' column
             print(f"Column count mismatch: {len(current_columns) + 2} found, {len(expected_columns)} expected. Adding missing columns...")
+            if pg_conn:
+                data_pushing.insert_processed_file(pg_conn, filename, 'column count mismatch')
+            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            os.remove(cleaned_file)
+            print("logging the error in the database and exiting...")
+            continue
         else:
             print(f"Column count matches: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
 
@@ -168,9 +225,17 @@ def main():
                     add_column_result = data_processing.add_column_to_csv(cleaned_file, temp_file, column_name, position)
                     if not add_column_result.get('success', True):
                         print(f"ERROR: {add_column_result.get('error', 'Unknown error')}")
+                        if pg_conn:
+                            data_pushing.insert_processed_file(pg_conn, filename, 'add column error')
+        
+                        print("logging the error in the database and exiting...")
                         continue
                 except Exception as e:
                     print(f"Error adding column {column_name}: {e}")
+                    if pg_conn:
+                        data_pushing.insert_processed_file(pg_conn, filename, 'critical add column error')
+    
+                    print("logging the error in the database and exiting...")
                     continue
                 shutil.move(temp_file, cleaned_file)
 
@@ -180,14 +245,30 @@ def main():
             self_deduplicate_result = data_processing.self_deduplicate_csv(cleaned_file, cleaned_file)
             if not self_deduplicate_result.get('success', True):
                 print(f"ERROR: {self_deduplicate_result.get('error', 'Unknown error')}")
+                if pg_conn:
+                    data_pushing.insert_processed_file(pg_conn, filename, 'self deduplication error')
+
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                os.remove(cleaned_file)
+                print("logging the error in the database and exiting...")
+                continue
         except Exception as e:
             print(f"Error during deduplication: {e}")
+            if pg_conn:
+                data_pushing.insert_processed_file(pg_conn, filename, 'critical self deduplication error')
+            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            os.remove(cleaned_file)
+            print("logging the error in the database and exiting...")
             continue
 
         # Mark file as processed
-        with open(PROCESSED_FILES, "a") as f:
-            f.write(f"{filename}\n")
-        processed_files.add(filename)
+        # with open(PROCESSED_FILES, "a") as f:
+        #     f.write(f"{filename}\n")
+        # processed_files.add(filename)
+
+        if pg_conn:
+            data_pushing.insert_processed_file(pg_conn, filename, 'processed')
+            print(f"Inserted {filename} into processed_files table.")
 
         print('\nChecking for processed files...')
 
@@ -215,12 +296,24 @@ def main():
 
                     if not compare_and_deduplicate_result.get('success', True):
                         print(f"ERROR: {compare_and_deduplicate_result.get('error', 'Unknown error')}")
+                        if pg_conn:
+                            data_pushing.insert_processed_file(pg_conn, filename, 'cross-file comparison error')
+
+                        os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                        os.remove(cleaned_file)
+                        print("logging the error in the database and exiting...")
                         continue
 
                     # Then optionally replace the cleaned file if needed
                     shutil.move(dedup_file_path, cleaned_file)
                 except Exception as e:
                     print(f"Error comparing {cleaned_file} and {prev_file_path}: {e}")
+                    if pg_conn:
+                        data_pushing.insert_processed_file(pg_conn, filename, 'critical cross-file comparison error')
+
+                    os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                    os.remove(cleaned_file)
+                    print("logging the error in the database and exiting...")
                     continue
         else:
             print("\nNo other files to compare with. Proceeding to insert.")
@@ -253,9 +346,23 @@ def main():
             )
             if not process_and_insert_result.get('success', True):
                 print(f"ERROR: {process_and_insert_result.get('error', 'Unknown error')}")
+                if pg_conn:
+                    data_pushing.insert_processed_file(pg_conn, filename, 'insert error')
+                    pg_conn.close()
+
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                os.remove(cleaned_file)
+                print("logging the error in the database and exiting...")
+                continue
         except Exception as e:
             print(f"Error inserting {cleaned_file} into ClickHouse: {e}")
-            return
+            if pg_conn:
+                data_pushing.insert_processed_file(pg_conn, filename, 'critical insert error')
+                pg_conn.close()
+            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            os.remove(cleaned_file)
+            print("logging the error in the database and exiting...")
+            continue
 
         print(f"Successfully uploaded {cleaned_file} to ClickHouse")
 
@@ -273,6 +380,12 @@ def main():
             print(f"Uploaded {cleaned_file} to S3 bucket {AWS_BUCKET}/{S3_PROCESSED_FOLDER}")
         except Exception as e:
             print(f"Error uploading {cleaned_file} to S3: {e}")
+            if pg_conn:
+                data_pushing.insert_processed_file(pg_conn, filename, 'upload error')
+                pg_conn.close()
+            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            os.remove(cleaned_file)
+            print("logging the error in the database and exiting...")
             continue
 
         # Update last_id
@@ -281,6 +394,13 @@ def main():
             update_last_id_result = data_pushing.update_last_id(client, table_name, TABLE_SCHEMA)
             if not update_last_id_result.get('success', True):
                 print(f"ERROR: {update_last_id_result.get('error', 'Unknown error')}")
+                if pg_conn:
+                    data_pushing.insert_processed_file(pg_conn, filename, 'update last_id error')
+                    pg_conn.close()
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                os.remove(cleaned_file)
+                print("logging the error in the database and exiting...")
+                continue
         except Exception as e:
             print(f"Error updating last_id: {e}")
             continue
@@ -297,8 +417,15 @@ def main():
 
         # Remove the original file after processing
         try:
-            os.remove(file_path)
-            print(f"Removed original file {file_path} after processing.")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                print(f"Removed original file {file_path} after processing.")
+
+            if filename in os.listdir(UPLOAD_FOLDER):
+                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                print(f"Removed original file {os.path.join(UPLOAD_FOLDER, filename)} after processing.")
+        except FileNotFoundError:
+            print(f"Original file {file_path} not found for removal.")
         except Exception as e:
             print(f"Error removing original file {file_path}: {e}")
 
@@ -309,4 +436,5 @@ def main():
 if __name__ == '__main__':
     while True:
         main()
-        time.sleep(24 * 60 * 60)  # Sleep for 24 hours before checking again
+        print("sleeping...")
+        time.sleep(7 * 24 * 60 * 60)  # Sleep for 7 days

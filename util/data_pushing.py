@@ -2,6 +2,7 @@ import pandas as pd
 import json
 from clickhouse_connect.driver.exceptions import DataError
 from clickhouse_connect.driver.exceptions import ClickHouseError
+import psycopg2
 
 def handle_nan_for_type(df):
     """
@@ -400,3 +401,79 @@ def update_last_id(client, table_name, file_path):
     print(f"last_id updated for {table}")
     
     return {"success": True, "last_id": last_id}
+
+def get_postgres_connection(host, port, database, user, password):
+    """
+    Establishes a connection to the PostgreSQL database.
+
+    Parameters:
+        host (str): The host of the PostgreSQL database.
+        port (int): The port of the PostgreSQL database.
+        dbname (str): The name of the PostgreSQL database.
+        user (str): The username for the PostgreSQL database.
+        password (str): The password for the PostgreSQL database.
+
+    Returns:
+        conn: A connection object to the PostgreSQL database.
+    """
+    try:
+        conn = psycopg2.connect(
+            host=host,
+            port=port,
+            database=database,
+            user=user,
+            password=password
+        )
+        return conn
+    except Exception as e:
+        print(f"Error connecting to PostgreSQL: {e}")
+        return None
+    
+def insert_processed_file(connection, file_name, status):
+    """
+    Insert a record into the processed_files table.
+    """
+    try:
+        # Create a cursor object using the connection
+        cursor = connection.cursor()
+
+        # Define the SQL query to insert a record
+        query = """
+            INSERT INTO processed_files (file_name, status)
+            VALUES (%s, %s);
+        """
+        # Execute the SQL query with parameters
+        cursor.execute(query, (file_name, status))
+
+        # Commit the transaction
+        connection.commit()
+    except Exception as e:
+        print("Error inserting record:", e)
+        connection.rollback()
+    finally:
+        # Close the cursor
+        cursor.close()
+
+def query_processed_files(connection):
+    """
+    Query the processed_files table and return all records.
+    """
+    try:
+        # Create a cursor object using the connection
+        cursor = connection.cursor()
+
+        # Define the SQL query to select all records
+        query = "SELECT file_name, status FROM processed_files;"
+
+        # Execute the SQL query
+        cursor.execute(query)
+
+        # Fetch all results
+        results = cursor.fetchall()
+
+        return results
+    except Exception as e:
+        print("Error querying records:", e)
+    finally:
+        # Close the cursor
+        cursor.close()
