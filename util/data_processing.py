@@ -291,7 +291,7 @@ def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, o
                 row_count_file1 += 1
 
             # print(f"\rProcessed {row_count_file1:,} rows from comparative file...", end="", flush=True)
-            logger.info(f"\rProcessed {row_count_file1:,} rows from comparative file...", end="", flush=True)
+            logger.info(f"\rProcessed {row_count_file1:,} rows from comparative file...")
 
     # print(f"\nCompleted processing {row_count_file1:,} rows from comparative file.")
     # print(f"Collected {len(row_hashes):,} unique hash_ids.")
@@ -341,7 +341,7 @@ def compare_and_deduplicate_csv_files(comparative_file_path, target_file_path, o
 
                 if row_count_file2 % 100000 == 0:
                     # print(f"\rProcessed {row_count_file2:,} rows from target file...", end="", flush=True)
-                    logger.info(f"\rProcessed {row_count_file2:,} rows from target file...", end="", flush=True)
+                    logger.info(f"\rProcessed {row_count_file2:,} rows from target file...")
 
     # Results summary
     end_time = time.time()
@@ -467,7 +467,7 @@ def self_deduplicate_csv(input_file_path, output_file_path=None, chunk_size=1000
             # Print progress periodically
             if row_count % chunk_size == 0:
                 # print(f"\rProcessed {row_count:,} rows, found {duplicate_count:,} duplicates...", end="", flush=True)
-                logger.info(f"\rProcessed {row_count:,} rows, found {duplicate_count:,} duplicates...", end="", flush=True)
+                logger.info(f"Processed {row_count:,} rows, found {duplicate_count:,} duplicates...")
 
     # If output is the same as input, replace the original file
     if output_file_path == input_file_path:

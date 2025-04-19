@@ -97,9 +97,10 @@ def main():
         return
 
     # Check for new files in the UPLOAD_FOLDER
-    for obj in uploaded_files['Contents']:
-        file_key = obj['Key']
-        filename = os.path.basename(file_key)
+    # for obj in uploaded_files['Contents']:
+    #     file_key = obj['Key']
+    #     filename = os.path.basename(file_key)
+    for filename in os.listdir(UPLOAD_FOLDER):
 
         # Skip if not a file or already processed or wrong format
         if filename in processed_files or not filename.endswith(('.csv', '.zip')):
@@ -108,8 +109,7 @@ def main():
 
         file_path = os.path.join(UPLOAD_FOLDER, filename)
         logger.info(f"Downloading {filename} to {UPLOAD_FOLDER}...")
-        s3_client.download_file(AWS_BUCKET, file_key, file_path)
-
+        # s3_client.download_file(AWS_BUCKET, file_key, file_path)
         logger.info(f"Processing file: {file_path}")
 
         # Extract if zip file
@@ -122,7 +122,7 @@ def main():
                     if pg_conn:
                         data_pushing.insert_processed_file(pg_conn, filename, 'extraction failed')
     
-                    os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                    # os.remove(os.path.join(UPLOAD_FOLDER, filename))
                     logger.error("Logging the error in the database and exiting...")
                     continue
             except Exception as e:
@@ -130,7 +130,7 @@ def main():
                 if pg_conn:
                     data_pushing.insert_processed_file(pg_conn, filename, 'critical extraction error')
 
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                # os.remove(os.path.join(UPLOAD_FOLDER, filename))
                 logger.error("Logging the error in the database and exiting...")
                 continue
 
@@ -139,7 +139,7 @@ def main():
             logger.warning(f"Skipping: {file_path} is not a valid CSV file after extraction")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'not a valid CSV file')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            # os.remove(os.path.join(UPLOAD_FOLDER, filename))
             logger.error("Logging the error in the database and exiting...")
             continue
 
@@ -152,7 +152,7 @@ def main():
             logger.error(f"No schema found for table {raw_file_name}, skipping...")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'no schema found')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            # os.remove(os.path.join(UPLOAD_FOLDER, filename))
             logger.error("Logging the error in the database and exiting...")
             continue
 
@@ -171,7 +171,7 @@ def main():
             logger.error(f"No column mapping found for {raw_file_name}, skipping...")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'no column mapping found')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            # os.remove(os.path.join(UPLOAD_FOLDER, filename))
             if os.path.exists(cleaned_file):
                 os.remove(cleaned_file)
             logger.error("Logging the error in the database and exiting...")
@@ -186,7 +186,7 @@ def main():
                 if pg_conn:
                     data_pushing.insert_processed_file(pg_conn, filename, 'rename error')
 
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                # os.remove(os.path.join(UPLOAD_FOLDER, filename))
                 if os.path.exists(cleaned_file):
                     os.remove(cleaned_file)
                 logger.error("Logging the error in the database and exiting...")
@@ -195,7 +195,7 @@ def main():
             logger.exception(f"Error renaming columns: {e}")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'critical rename error')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            # os.remove(os.path.join(UPLOAD_FOLDER, filename))
             if os.path.exists(cleaned_file):
                 os.remove(cleaned_file)
             logger.error("Logging the error in the database and exiting...")
@@ -217,7 +217,7 @@ def main():
             logger.error(f"Column count mismatch: {len(current_columns) + 2} found, {len(expected_columns)} expected. Adding missing columns...")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'column count mismatch')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            # os.remove(os.path.join(UPLOAD_FOLDER, filename))
             if os.path.exists(cleaned_file):
                 os.remove(cleaned_file)
             logger.error("Logging the error in the database and exiting...")
@@ -257,7 +257,7 @@ def main():
                 if pg_conn:
                     data_pushing.insert_processed_file(pg_conn, filename, 'self deduplication error')
 
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                # os.remove(os.path.join(UPLOAD_FOLDER, filename))
                 if os.path.exists(cleaned_file):
                     os.remove(cleaned_file)
                 logger.error("Logging the error in the database and exiting...")
@@ -266,7 +266,7 @@ def main():
             logger.exception(f"Error during deduplication: {e}")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'critical self deduplication error')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            # os.remove(os.path.join(UPLOAD_FOLDER, filename))
             if os.path.exists(cleaned_file):
                 os.remove(cleaned_file)
             logger.error("Logging the error in the database and exiting...")
@@ -306,7 +306,7 @@ def main():
                         if pg_conn:
                             data_pushing.insert_processed_file(pg_conn, filename, 'cross-file comparison error')
 
-                        os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                        # os.remove(os.path.join(UPLOAD_FOLDER, filename))
                         if os.path.exists(cleaned_file):
                             os.remove(cleaned_file)
                         logger.error("Logging the error in the database and exiting...")
@@ -319,7 +319,7 @@ def main():
                     if pg_conn:
                         data_pushing.insert_processed_file(pg_conn, filename, 'critical cross-file comparison error')
 
-                    os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                    # os.remove(os.path.join(UPLOAD_FOLDER, filename))
                     if os.path.exists(cleaned_file):
                         os.remove(cleaned_file)
                     logger.error("Logging the error in the database and exiting...")
@@ -359,7 +359,7 @@ def main():
                     data_pushing.insert_processed_file(pg_conn, filename, 'insert error')
                     pg_conn.close()
 
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                # os.remove(os.path.join(UPLOAD_FOLDER, filename))
                 if os.path.exists(cleaned_file):
                     os.remove(cleaned_file)
                 logger.error("Logging the error in the database and exiting...")
@@ -369,7 +369,7 @@ def main():
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'critical insert error')
                 pg_conn.close()
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            # os.remove(os.path.join(UPLOAD_FOLDER, filename))
             if os.path.exists(cleaned_file):
                 os.remove(cleaned_file)
             logger.error("Logging the error in the database and exiting...")
@@ -394,7 +394,7 @@ def main():
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'upload error')
                 pg_conn.close()
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
+            # os.remove(os.path.join(UPLOAD_FOLDER, filename))
             if os.path.exists(cleaned_file):
                 os.remove(cleaned_file)
             logger.error("Logging the error in the database and exiting...")
@@ -409,7 +409,7 @@ def main():
                 if pg_conn:
                     data_pushing.insert_processed_file(pg_conn, filename, 'update last_id error')
                     pg_conn.close()
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                # os.remove(os.path.join(UPLOAD_FOLDER, filename))
                 if os.path.exists(cleaned_file):
                     os.remove(cleaned_file)
                 logger.error("Logging the error in the database and exiting...")
@@ -435,7 +435,7 @@ def main():
                 logger.info(f"Removed original file {file_path} after processing.")
 
             if filename in os.listdir(UPLOAD_FOLDER):
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
+                # os.remove(os.path.join(UPLOAD_FOLDER, filename))
                 logger.info(f"Removed original file {os.path.join(UPLOAD_FOLDER, filename)} after processing.")
         except FileNotFoundError:
             logger.warning(f"Original file {file_path} not found for removal.")

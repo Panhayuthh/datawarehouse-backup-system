@@ -4,6 +4,16 @@ from clickhouse_connect.driver.exceptions import DataError
 from clickhouse_connect.driver.exceptions import ClickHouseError
 import psycopg2
 import logging
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+DATABASE_HOST = os.getenv('DATABASE_HOST')
+DATABASE_PORT = os.getenv('DATABASE_PORT')
+DATABASE_NAME = os.getenv('DATABASE_NAME')
+DATABASE_USERNAME = os.getenv('DATABASE_USERNAME')
+DATABASE_PASSWORD = os.getenv('DATABASE_PASSWORD')
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +62,7 @@ def find_problematic_rows(df, column, display_df=True, na=False):
         logger.warning(f"Found {len(problem_rows)} problematic rows in column `{column}`")
         if display_df:
         #   print("Displaying full row data:\n")
-            logger.info("Displaying full row data:\n")
+            logger.info("Displaying full row data:")
         #   print(problem_rows.to_string(index=True))  # Print full row without index
             logger.info(problem_rows.to_string(index=True))
     else:
@@ -84,22 +94,22 @@ def analyze_type_error(df, client, table):
                 non_nullable_columns.append(column_name)
 
         # print(f"\n🔍 Non-nullable columns in table `{table}`: {non_nullable_columns}")
-        logger.info(f"\n🔍 Non-nullable columns in table `{table}`: {non_nullable_columns}")
+        logger.info(f"🔍 Non-nullable columns in table `{table}`: {non_nullable_columns}")
 
         # Check columns in the DataFrame against non-nullable columns
         for col in non_nullable_columns:
             if col in df.columns:
                 dtype = df[col].dtype
                 # print(f"\n🔍 Investigating non-nullable column: {col} (dtype: {dtype})")
-                logger.info(f"\n🔍 Investigating non-nullable column: {col} (dtype: {dtype})")
+                logger.info(f"🔍 Investigating non-nullable column: {col} (dtype: {dtype})")
                 find_problematic_rows(df, col, na=True)
             else:
                 # print(f"\n⚠️ Column `{col}` is non-nullable in the table but missing in the DataFrame.")
-                logger.warning(f"\n⚠️ Column `{col}` is non-nullable in the table but missing in the DataFrame.")
+                logger.warning(f"⚠️ Column `{col}` is non-nullable in the table but missing in the DataFrame.")
 
     except ClickHouseError as e:
         # print(f"\n🚨 Error querying table schema for `{table}`: {e}")
-        logger.error(f"\n🚨 Error querying table schema for `{table}`: {e}")
+        logger.error(f"🚨 Error querying table schema for `{table}`: {e}")
 
 
 def prevent_id_duplicate(client, table, df):
@@ -119,7 +129,7 @@ def prevent_id_duplicate(client, table, df):
             existing_count: The number of rows that were duplicates.
     """
     # print(f"\nChecking for duplicates in {table}...")
-    logger.info(f"\nChecking for duplicates in {table}...")
+    logger.info(f"Checking for duplicates in {table}...")
     original_total_rows = len(df)
 
     # Check table row count
@@ -148,7 +158,7 @@ def prevent_id_duplicate(client, table, df):
     # print(f"- Total rows in chunk: {original_total_rows}")
     # print(f"- Existing rows found: {existing_count}")
     # print(f"- New rows to insert: {new_rows}")
-    logger.info(f"\nDuplicate check results:")
+    logger.info(f"Duplicate check results:")
     logger.info(f"- Total rows in chunk: {original_total_rows}")
     logger.info(f"- Existing rows found: {existing_count}")
     logger.info(f"- New rows to insert: {new_rows}")
@@ -167,7 +177,7 @@ def get_table_schema(table_name, file_path):
         schema = json.load(f)
 
     # print(f"\nLoading schema for table: {table_name}")
-    logger.info(f"\nLoading schema for table: {table_name}")
+    logger.info(f"Loading schema for table: {table_name}")
     for table in schema:
         if table in table_name:
             return schema[table]
@@ -208,12 +218,12 @@ def insert_new_data(client, table, df, column_names, column_type_names):
         )
 
         # print(f"\nSuccessfully inserted {len(df)} rows into {table}!")
-        logger.info(f"\nSuccessfully inserted {len(df)} rows into {table}!")
+        logger.info(f"Successfully inserted {len(df)} rows into {table}!")
         return True, len(df)
 
     except DataError as e:
         # print("\nDataError encountered while inserting!")
-        logger.error("\nDataError encountered while inserting!")
+        logger.error("DataError encountered while inserting!")
         error_message = str(e)
         # print(error_message)
         logger.error(error_message)
@@ -223,13 +233,13 @@ def insert_new_data(client, table, df, column_names, column_type_names):
             except Exception:
                 col_name = "Unknown"
             # print(f"\n🔍 Investigating problematic column: {col_name}`")
-            logger.info(f"\n🔍 Investigating problematic column: {col_name}`")
+            logger.info(f"🔍 Investigating problematic column: {col_name}`")
             find_problematic_rows(df, col_name)
         return False, 0
 
     except TypeError as e:
         # print("\nTypeError encountered while inserting!")
-        logger.error("\nTypeError encountered while inserting!")
+        logger.error("TypeError encountered while inserting!")
         error_message = str(e)
         # print(error_message)
         logger.error(error_message)
@@ -238,7 +248,7 @@ def insert_new_data(client, table, df, column_names, column_type_names):
 
     except AttributeError as e:
         # print("\nAttributeError encountered while inserting!")
-        logger.error("\nAttributeError encountered while inserting!")
+        logger.error("AttributeError encountered while inserting!")
         error_message = str(e)
         # print(error_message)
         logger.error(error_message)
@@ -246,7 +256,7 @@ def insert_new_data(client, table, df, column_names, column_type_names):
     
     except Exception as e:
         # print("\nGeneral error encountered while inserting!")
-        logger.error("\nGeneral error encountered while inserting!")
+        logger.error("General error encountered while inserting!")
         error_message = str(e)
         # print(error_message)
         logger.error(error_message)
@@ -273,7 +283,7 @@ def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=No
         dob_columns: List of date-of-birth columns to convert.
     """
     # print("\n🚀 Starting CSV processing in chunks...")
-    logger.info("\n🚀 Starting CSV processing in chunks...")
+    logger.info("🚀 Starting CSV processing in chunks...")
 
     # Try UTF-8 first, fall back to latin1 if needed
     try:
@@ -314,7 +324,7 @@ def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=No
 
     for current_chunk, df_chunk in enumerate(chunk_iter, 1):
         # print(f"\n📌 Processing chunk {current_chunk}/{total_chunks} ({len(df_chunk)} rows)")
-        logger.info(f"\n📌 Processing chunk {current_chunk}/{total_chunks} ({len(df_chunk)} rows)")
+        logger.info(f"📌 Processing chunk {current_chunk}/{total_chunks} ({len(df_chunk)} rows)")
 
         # Assign incremental IDs
         df_chunk.insert(0, 'id', range(last_id + 1, last_id + 1 + len(df_chunk)))
@@ -379,7 +389,7 @@ def process_and_insert_csv(client, table, csv_path, chunk_size=10000, last_id=No
     # print(f"- Chunks skipped (duplicates): {chunks_skipped}")
     # print(f"- Total rows inserted: {total_rows_inserted}")
     # print(f"- Last used ID: {last_id}")
-    logger.info("\n📊 Results:")
+    logger.info("📊 Results:")
     logger.info(f"- Chunks processed: {chunks_processed}/{total_chunks}")
     logger.info(f"- Chunks skipped (duplicates): {chunks_skipped}")
     logger.info(f"- Total rows inserted: {total_rows_inserted}")
@@ -477,11 +487,25 @@ def get_postgres_connection(host, port, database, user, password):
         logger.error(f"Error connecting to PostgreSQL: {e}")
         return None
     
-def insert_processed_file(connection, file_name, status):
+def insert_processed_file(connection,
+                          file_name, 
+                          status):
     """
     Insert a record into the processed_files table.
     """
+    cursor = None
     try:
+
+        if connection.closed:
+
+            connection = get_postgres_connection(
+            host=DATABASE_HOST,
+            port=DATABASE_PORT,
+            database=DATABASE_NAME,
+            user=DATABASE_USERNAME,
+            password=DATABASE_PASSWORD
+            )
+
         # Create a cursor object using the connection
         cursor = connection.cursor()
 
@@ -497,17 +521,29 @@ def insert_processed_file(connection, file_name, status):
         connection.commit()
     except Exception as e:
         # print("Error inserting record:", e)
-        logger.error("Error inserting record:", e)
+        logger.error("Error inserting record:", {str(e)})
         connection.rollback()
     finally:
         # Close the cursor
-        cursor.close()
+        if cursor:
+            cursor.close()
 
 def query_processed_files(connection):
     """
     Query the processed_files table and return all records.
     """
+    cursor = None
     try:
+
+        if connection.closed:
+            connection = get_postgres_connection(
+                host=DATABASE_HOST,
+                port=DATABASE_PORT,
+                database=DATABASE_NAME,
+                user=DATABASE_USERNAME,
+                password=DATABASE_PASSWORD
+                )
+        
         # Create a cursor object using the connection
         cursor = connection.cursor()
 
@@ -523,7 +559,8 @@ def query_processed_files(connection):
         return results
     except Exception as e:
         # print("Error querying records:", e)
-        logger.error("Error querying records:", e)
+        logger.error("Error querying records:", {str(e)})
     finally:
         # Close the cursor
-        cursor.close()
+        if cursor:
+            cursor.close()
