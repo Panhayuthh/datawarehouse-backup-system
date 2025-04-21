@@ -62,14 +62,6 @@ DATABASE_NAME = os.getenv('DATABASE_NAME')
 DATABASE_USERNAME = os.getenv('DATABASE_USERNAME')
 DATABASE_PASSWORD = os.getenv('DATABASE_PASSWORD')
 
-pg_conn = data_pushing.get_postgres_connection(
-    host=DATABASE_HOST,
-    port=DATABASE_PORT,
-    database=DATABASE_NAME,
-    user=DATABASE_USERNAME,
-    password=DATABASE_PASSWORD
-)
-
 for folder in [UPLOAD_FOLDER, EXTRACTED_FOLDER, PROCESSED_FOLDER]:
     if not os.path.exists(folder):
         os.makedirs(folder)
@@ -102,20 +94,17 @@ def process_file(filename, s3_file_key):
                 logger.info(file_path)
                 if not file_path:
                     logger.error(f"Extraction failed for {filename}")
-                    if pg_conn:
-                        data_pushing.insert_processed_file(pg_conn, filename, 'extraction failed')
+                    data_pushing.insert_processed_file(filename, 'extraction failed')
                     return False
             except Exception as e:
                 logger.exception(f"Critical error extracting {filename}: {e}")
-                if pg_conn:
-                    data_pushing.insert_processed_file(pg_conn, filename, 'critical extraction error')
+                data_pushing.insert_processed_file(filename, 'critical extraction error')
                 return False
 
         # Process only CSV files
         if not file_path or not file_path.endswith('.csv'):
             logger.warning(f"Skipping: {file_path} is not a valid CSV file after extraction")
-            if pg_conn:
-                data_pushing.insert_processed_file(pg_conn, filename, 'not a valid CSV file')
+            data_pushing.insert_processed_file(filename, 'not a valid CSV file')
             return False
 
         # Get base table name from filename
@@ -125,8 +114,7 @@ def process_file(filename, s3_file_key):
         table_schema = data_pushing.get_table_schema(table_name=raw_file_name, file_path=TABLE_SCHEMA)
         if not table_schema:
             logger.error(f"No schema found for table {raw_file_name}")
-            if pg_conn:
-                data_pushing.insert_processed_file(pg_conn, filename, 'no schema found')
+            data_pushing.insert_processed_file(filename, 'no schema found')
             return False
 
         # Use table name from schema or fallback to raw filename
@@ -142,8 +130,7 @@ def process_file(filename, s3_file_key):
         column_names = data_processing.get_rename_columns(table_name=raw_file_name, file_path=RENAME_MAPPING)
         if not column_names:
             logger.error(f"No column mapping found for {raw_file_name}")
-            if pg_conn:
-                data_pushing.insert_processed_file(pg_conn, filename, 'no column mapping found')
+            data_pushing.insert_processed_file(filename, 'no column mapping found')
             return False
 
         # Rename columns
@@ -152,13 +139,11 @@ def process_file(filename, s3_file_key):
             rename_result = data_processing.rename_column_in_csv(file_path, column_names, cleaned_file)
             if not rename_result.get('success', True):
                 logger.error(f"ERROR: {rename_result.get('error', 'Unknown error')}")
-                if pg_conn:
-                    data_pushing.insert_processed_file(pg_conn, filename, 'rename error')
+                data_pushing.insert_processed_file(filename, 'rename error')
                 return False
         except Exception as e:
             logger.exception(f"Error renaming columns: {e}")
-            if pg_conn:
-                data_pushing.insert_processed_file(pg_conn, filename, 'critical rename error')
+            data_pushing.insert_processed_file(filename, 'critical rename error')
             return False
 
         # Check for missing columns
@@ -175,8 +160,7 @@ def process_file(filename, s3_file_key):
         # Add missing columns
         if len(current_columns) + 2 != len(expected_columns):  # +2 for 'id' column and 'row_hash' column
             logger.error(f"Column count mismatch: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
-            if pg_conn:
-                data_pushing.insert_processed_file(pg_conn, filename, 'column count mismatch')
+            data_pushing.insert_processed_file(filename, 'column count mismatch')
             return False
         else:
             logger.info(f"Column count matches: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
@@ -190,13 +174,11 @@ def process_file(filename, s3_file_key):
                     add_column_result = data_processing.add_column_to_csv(cleaned_file, temp_file, column_name, position)
                     if not add_column_result.get('success', True):
                         logger.error(f"ERROR: {add_column_result.get('error', 'Unknown error')}")
-                        if pg_conn:
-                            data_pushing.insert_processed_file(pg_conn, filename, 'add column error')
+                        data_pushing.insert_processed_file(filename, 'add column error')
                         return False
                 except Exception as e:
                     logger.exception(f"Error adding column {column_name}: {e}")
-                    if pg_conn:
-                        data_pushing.insert_processed_file(pg_conn, filename, 'critical add column error')
+                    data_pushing.insert_processed_file(filename, 'critical add column error')
                     return False
                 shutil.move(temp_file, cleaned_file)
 
@@ -206,19 +188,12 @@ def process_file(filename, s3_file_key):
             self_deduplicate_result = data_processing.self_deduplicate_csv(cleaned_file, cleaned_file)
             if not self_deduplicate_result.get('success', True):
                 logger.error(f"ERROR: {self_deduplicate_result.get('error', 'Unknown error')}")
-                if pg_conn:
-                    data_pushing.insert_processed_file(pg_conn, filename, 'self deduplication error')
+                data_pushing.insert_processed_file(filename, 'self deduplication error')
                 return False
         except Exception as e:
             logger.exception(f"Error during deduplication: {e}")
-            if pg_conn:
-                data_pushing.insert_processed_file(pg_conn, filename, 'critical self deduplication error')
+            data_pushing.insert_processed_file(filename, 'critical self deduplication error')
             return False
-
-        # Mark file as processed
-        if pg_conn:
-            data_pushing.insert_processed_file(pg_conn, filename, 'processed')
-            logger.info(f"Inserted {filename} into processed_files table.")
 
         logger.info('Checking for processed files...')
 
@@ -246,19 +221,21 @@ def process_file(filename, s3_file_key):
 
                     if not compare_and_deduplicate_result.get('success', True):
                         logger.error(f"ERROR: {compare_and_deduplicate_result.get('error', 'Unknown error')}")
-                        if pg_conn:
-                            data_pushing.insert_processed_file(pg_conn, filename, 'cross-file comparison error')
+                        data_pushing.insert_processed_file(filename, 'cross-file comparison error')
                         return False
 
                     # Then optionally replace the cleaned file if needed
                     shutil.move(dedup_file_path, cleaned_file)
                 except Exception as e:
                     logger.exception(f"Error comparing {cleaned_file} and {prev_file_path}: {e}")
-                    if pg_conn:
-                        data_pushing.insert_processed_file(pg_conn, filename, 'critical cross-file comparison error')
+                    data_pushing.insert_processed_file(filename, 'critical cross-file comparison error')
                     return False
         else:
             logger.info("No other files to compare with. Proceeding to insert.")
+
+        # Mark file as processed
+        data_pushing.insert_processed_file(filename, 'processed')
+        logger.info(f"Inserted {filename} into processed_files table.")
 
         # Insert into ClickHouse
         last_id = table_schema.get("last_id", 0)
@@ -288,15 +265,14 @@ def process_file(filename, s3_file_key):
             )
             if not process_and_insert_result.get('success', True):
                 logger.error(f"ERROR: {process_and_insert_result.get('error', 'Unknown error')}")
-                if pg_conn:
-                    data_pushing.insert_processed_file(pg_conn, filename, 'insert error')
+                data_pushing.insert_processed_file(filename, 'insert error')
                 return False
         except Exception as e:
             logger.exception(f"Error inserting {cleaned_file} into ClickHouse: {e}")
-            if pg_conn:
-                data_pushing.insert_processed_file(pg_conn, filename, 'critical insert error')
+            data_pushing.insert_processed_file(filename, 'critical insert error')
             return False
 
+        data_pushing.insert_processed_file(filename, 'uploaded to ClickHouse')
         logger.info(f"Successfully uploaded {cleaned_file} to ClickHouse")
 
         # Move the processed file to the processed folder in S3
@@ -313,8 +289,7 @@ def process_file(filename, s3_file_key):
             logger.info(f"Uploaded {cleaned_file} to S3 bucket {AWS_BUCKET}/{S3_PROCESSED_FOLDER}")
         except Exception as e:
             logger.exception(f"Error uploading {cleaned_file} to S3: {e}")
-            if pg_conn:
-                data_pushing.insert_processed_file(pg_conn, filename, 'upload error')
+            data_pushing.insert_processed_file(filename, 'upload error')
             return False
 
         # Update last_id
@@ -323,8 +298,7 @@ def process_file(filename, s3_file_key):
             update_last_id_result = data_pushing.update_last_id(client, table_name, TABLE_SCHEMA)
             if not update_last_id_result.get('success', True):
                 logger.error(f"ERROR: {update_last_id_result.get('error', 'Unknown error')}")
-                if pg_conn:
-                    data_pushing.insert_processed_file(pg_conn, filename, 'update last_id error')
+                data_pushing.insert_processed_file(filename, 'update last_id error')
                 return False
         except Exception as e:
             logger.exception(f"Error updating last_id: {e}")
@@ -334,8 +308,7 @@ def process_file(filename, s3_file_key):
         
     except Exception as e:
         logger.exception(f"Unexpected error processing file {filename}: {e}")
-        if pg_conn:
-            data_pushing.insert_processed_file(pg_conn, filename, f'unexpected error: {str(e)[:100]}')
+        data_pushing.insert_processed_file(filename, f'unexpected error: {str(e)[:100]}')
         return False
         
     finally:
@@ -357,7 +330,7 @@ def main():
 
     try:
         # Query processed files
-        query = data_pushing.query_processed_files(pg_conn)
+        query = data_pushing.query_processed_files()
         processed_files = set([file[0] for file in query])
 
         # List all files in S3 upload folder

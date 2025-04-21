@@ -487,24 +487,27 @@ def get_postgres_connection(host, port, database, user, password):
         logger.error(f"Error connecting to PostgreSQL: {e}")
         return None
     
-def insert_processed_file(connection,
-                          file_name, 
+def insert_processed_file(file_name, 
                           status):
     """
     Insert a record into the processed_files table.
     """
+    connection = None
     cursor = None
     try:
 
-        if connection.closed:
-
-            connection = get_postgres_connection(
-            host=DATABASE_HOST,
-            port=DATABASE_PORT,
-            database=DATABASE_NAME,
-            user=DATABASE_USERNAME,
-            password=DATABASE_PASSWORD
-            )
+        logger.info("connecting to postgres...")
+        connection = get_postgres_connection(
+        host=DATABASE_HOST,
+        port=DATABASE_PORT,
+        database=DATABASE_NAME,
+        user=DATABASE_USERNAME,
+        password=DATABASE_PASSWORD
+        )
+        
+        if connection is None:
+            logger.error("Failed to connect to PostgreSQL.")
+            return
 
         # Create a cursor object using the connection
         cursor = connection.cursor()
@@ -519,30 +522,44 @@ def insert_processed_file(connection,
 
         # Commit the transaction
         connection.commit()
+        logger.info(f"Inserted record into processed_files: {file_name}, {status}")
+
+    except psycopg2.OperationalError as e:
+        logger.error(f"Error connecting to PostgreSQL: {str(e)}")
+
     except Exception as e:
         # print("Error inserting record:", e)
-        logger.error("Error inserting record:", {str(e)})
-        connection.rollback()
+        logger.error(f"Error inserting record: {str(e)}")
+        if connection and not connection.closed:
+            connection.rollback()
+
     finally:
         # Close the cursor
         if cursor:
             cursor.close()
+        if connection:
+            connection.close()
+            logger.debug("Database connection closed in insert_processed_file")
 
-def query_processed_files(connection):
+def query_processed_files():
     """
     Query the processed_files table and return all records.
     """
+    connection = None
     cursor = None
     try:
 
-        if connection.closed:
-            connection = get_postgres_connection(
-                host=DATABASE_HOST,
-                port=DATABASE_PORT,
-                database=DATABASE_NAME,
-                user=DATABASE_USERNAME,
-                password=DATABASE_PASSWORD
-                )
+        connection = get_postgres_connection(
+            host=DATABASE_HOST,
+            port=DATABASE_PORT,
+            database=DATABASE_NAME,
+            user=DATABASE_USERNAME,
+            password=DATABASE_PASSWORD
+            )
+        
+        if connection is None:
+            logger.error("Failed to connect to PostgreSQL.")
+            return
         
         # Create a cursor object using the connection
         cursor = connection.cursor()
@@ -557,10 +574,19 @@ def query_processed_files(connection):
         results = cursor.fetchall()
 
         return results
+    except psycopg2.OperationalError as e:
+        logger.error(f"Error connecting to PostgreSQL: {str(e)}")
+        
     except Exception as e:
         # print("Error querying records:", e)
-        logger.error("Error querying records:", {str(e)})
+        logger.error(f"Error querying records: {str(e)}")
+
+        if connection and not connection.closed:
+            connection.rollback()
     finally:
         # Close the cursor
         if cursor:
             cursor.close()
+        if connection:
+            connection.close()
+            logger.debug("Database connection closed in insert_processed_file")
