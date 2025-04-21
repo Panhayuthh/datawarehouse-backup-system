@@ -11,7 +11,7 @@ import boto3
 from clickhouse_connect.driver.exceptions import DataError
 from clickhouse_connect.driver.exceptions import ClickHouseError
 
-from util import data_processing, data_pushing
+from util import data_processing, data_pushing, cleanup
 
 # Configure logging
 logging.basicConfig(
@@ -38,7 +38,11 @@ CLICKHOUSE_DATABASE="smallable2_playground"
 CLICKHOUSE_USERNAME= os.getenv('CLICKHOUSE_USERNAME')
 CLICKHOUSE_PASSWORD= os.getenv('CLICKHOUSE_PASSWORD')
 
-client = clickhouse_connect.get_client(host=CLICKHOUSE_HOST, port=8443, database=CLICKHOUSE_DATABASE, username=CLICKHOUSE_USERNAME, password=CLICKHOUSE_PASSWORD)
+client = clickhouse_connect.get_client(host=CLICKHOUSE_HOST, 
+                                       port=8443, 
+                                       database=CLICKHOUSE_DATABASE, 
+                                       username=CLICKHOUSE_USERNAME, 
+                                       password=CLICKHOUSE_PASSWORD)
 
 AWS_BUCKET = os.getenv('AWS_BUCKET')
 AWS_ACCESS_KEY = os.getenv('AWS_ACCESS_KEY')
@@ -66,50 +70,29 @@ pg_conn = data_pushing.get_postgres_connection(
     password=DATABASE_PASSWORD
 )
 
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
-    logger.info(f"Created directory: {UPLOAD_FOLDER}")
+for folder in [UPLOAD_FOLDER, EXTRACTED_FOLDER, PROCESSED_FOLDER]:
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+        logger.info(f"Created directory: {folder}")
 
-if not os.path.exists(EXTRACTED_FOLDER):
-    os.makedirs(EXTRACTED_FOLDER)
-    logger.info(f"Created directory: {EXTRACTED_FOLDER}")
-
-if not os.path.exists(PROCESSED_FOLDER):
-    os.makedirs(PROCESSED_FOLDER)
-    logger.info(f"Created directory: {PROCESSED_FOLDER}")
-
-def main():
+def process_file(filename, s3_file_key):
     """
-    Process files in the UPLOAD_FOLDER and save processed files in table-specific subfolders
-    within the PROCESSED_FOLDER before pushing to ClickHouse.
-    Checks daily for new files, skips already processed ones, and handles deduplication
-    both within and across files.
+    Process a single file from S3.
+    
+    Args:
+        filename: Name of the file
+        s3_file_key: S3 key of the file
+        
+    Returns:
+        bool: True if processing was successful, False otherwise
     """
-    logger.info("Starting the file processing script...")
-
-    query = data_pushing.query_processed_files(pg_conn)
-    processed_files = set([file[0] for file in query])
-
-    # List all files in the UPLOAD_FOLDER
-    uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_UPLOAD_FOLDER)
-    if 'Contents' not in uploaded_files or not uploaded_files['Contents']:
-        logger.info("No new files to process. Exiting...")
-        return
-
-    # Check for new files in the UPLOAD_FOLDER
-    for obj in uploaded_files['Contents']:
-        file_key = obj['Key']
-        filename = os.path.basename(file_key)
-    # for filename in os.listdir(UPLOAD_FOLDER):
-
-        # Skip if not a file or already processed or wrong format
-        if filename in processed_files or not filename.endswith(('.csv', '.zip')):
-            logger.info(f"Skipping {filename}: Already processed, not a file, or invalid format.")
-            continue
-
-        file_path = os.path.join(UPLOAD_FOLDER, filename)
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    cleaned_file = None
+    
+    try:
+        # Download file from S3
         logger.info(f"Downloading {filename} to {UPLOAD_FOLDER}...")
-        s3_client.download_file(AWS_BUCKET, file_key, file_path)
+        s3_client.download_file(AWS_BUCKET, s3_file_key, file_path)
         logger.info(f"Processing file: {file_path}")
 
         # Extract if zip file
@@ -118,30 +101,22 @@ def main():
                 file_path = data_processing.extract_file(file_path, EXTRACTED_FOLDER)
                 logger.info(file_path)
                 if not file_path:
-                    logger.error(f"Extraction failed for {filename}, deleting and stopping...")
+                    logger.error(f"Extraction failed for {filename}")
                     if pg_conn:
                         data_pushing.insert_processed_file(pg_conn, filename, 'extraction failed')
-    
-                    os.remove(os.path.join(UPLOAD_FOLDER, filename))
-                    logger.error("Logging the error in the database and exiting...")
-                    continue
+                    return False
             except Exception as e:
                 logger.exception(f"Critical error extracting {filename}: {e}")
                 if pg_conn:
                     data_pushing.insert_processed_file(pg_conn, filename, 'critical extraction error')
-
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
-                logger.error("Logging the error in the database and exiting...")
-                continue
+                return False
 
         # Process only CSV files
         if not file_path or not file_path.endswith('.csv'):
             logger.warning(f"Skipping: {file_path} is not a valid CSV file after extraction")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'not a valid CSV file')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
-            logger.error("Logging the error in the database and exiting...")
-            continue
+            return False
 
         # Get base table name from filename
         raw_file_name = os.path.splitext(os.path.basename(file_path))[0]
@@ -149,12 +124,10 @@ def main():
         # Get table schema to determine table name
         table_schema = data_pushing.get_table_schema(table_name=raw_file_name, file_path=TABLE_SCHEMA)
         if not table_schema:
-            logger.error(f"No schema found for table {raw_file_name}, skipping...")
+            logger.error(f"No schema found for table {raw_file_name}")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'no schema found')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
-            logger.error("Logging the error in the database and exiting...")
-            continue
+            return False
 
         # Use table name from schema or fallback to raw filename
         table_name = table_schema.get("table_name", raw_file_name)
@@ -168,14 +141,10 @@ def main():
         # Get column mapping for renaming
         column_names = data_processing.get_rename_columns(table_name=raw_file_name, file_path=RENAME_MAPPING)
         if not column_names:
-            logger.error(f"No column mapping found for {raw_file_name}, skipping...")
+            logger.error(f"No column mapping found for {raw_file_name}")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'no column mapping found')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
-            if os.path.exists(cleaned_file):
-                os.remove(cleaned_file)
-            logger.error("Logging the error in the database and exiting...")
-            continue
+            return False
 
         # Rename columns
         logger.info(f"Renaming columns in {file_path}...")
@@ -185,21 +154,12 @@ def main():
                 logger.error(f"ERROR: {rename_result.get('error', 'Unknown error')}")
                 if pg_conn:
                     data_pushing.insert_processed_file(pg_conn, filename, 'rename error')
-
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
-                if os.path.exists(cleaned_file):
-                    os.remove(cleaned_file)
-                logger.error("Logging the error in the database and exiting...")
-                continue
+                return False
         except Exception as e:
             logger.exception(f"Error renaming columns: {e}")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'critical rename error')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
-            if os.path.exists(cleaned_file):
-                os.remove(cleaned_file)
-            logger.error("Logging the error in the database and exiting...")
-            continue
+            return False
 
         # Check for missing columns
         logger.info(f"Checking for missing columns in {cleaned_file}...")
@@ -213,15 +173,11 @@ def main():
             current_columns = next(reader)  # Get header row
 
         # Add missing columns
-        if len(current_columns) + 2 != len(expected_columns): # +2 for 'id' column and 'row_hash' column
-            logger.error(f"Column count mismatch: {len(current_columns) + 2} found, {len(expected_columns)} expected. Adding missing columns...")
+        if len(current_columns) + 2 != len(expected_columns):  # +2 for 'id' column and 'row_hash' column
+            logger.error(f"Column count mismatch: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'column count mismatch')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
-            if os.path.exists(cleaned_file):
-                os.remove(cleaned_file)
-            logger.error("Logging the error in the database and exiting...")
-            continue
+            return False
         else:
             logger.info(f"Column count matches: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
 
@@ -236,16 +192,12 @@ def main():
                         logger.error(f"ERROR: {add_column_result.get('error', 'Unknown error')}")
                         if pg_conn:
                             data_pushing.insert_processed_file(pg_conn, filename, 'add column error')
-        
-                        logger.error("Logging the error in the database and exiting...")
-                        continue
+                        return False
                 except Exception as e:
                     logger.exception(f"Error adding column {column_name}: {e}")
                     if pg_conn:
                         data_pushing.insert_processed_file(pg_conn, filename, 'critical add column error')
-    
-                    logger.error("Logging the error in the database and exiting...")
-                    continue
+                    return False
                 shutil.move(temp_file, cleaned_file)
 
         # Remove duplicates within the file
@@ -256,21 +208,12 @@ def main():
                 logger.error(f"ERROR: {self_deduplicate_result.get('error', 'Unknown error')}")
                 if pg_conn:
                     data_pushing.insert_processed_file(pg_conn, filename, 'self deduplication error')
-
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
-                if os.path.exists(cleaned_file):
-                    os.remove(cleaned_file)
-                logger.error("Logging the error in the database and exiting...")
-                continue
+                return False
         except Exception as e:
             logger.exception(f"Error during deduplication: {e}")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'critical self deduplication error')
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
-            if os.path.exists(cleaned_file):
-                os.remove(cleaned_file)
-            logger.error("Logging the error in the database and exiting...")
-            continue
+            return False
 
         # Mark file as processed
         if pg_conn:
@@ -305,12 +248,7 @@ def main():
                         logger.error(f"ERROR: {compare_and_deduplicate_result.get('error', 'Unknown error')}")
                         if pg_conn:
                             data_pushing.insert_processed_file(pg_conn, filename, 'cross-file comparison error')
-
-                        os.remove(os.path.join(UPLOAD_FOLDER, filename))
-                        if os.path.exists(cleaned_file):
-                            os.remove(cleaned_file)
-                        logger.error("Logging the error in the database and exiting...")
-                        continue
+                        return False
 
                     # Then optionally replace the cleaned file if needed
                     shutil.move(dedup_file_path, cleaned_file)
@@ -318,12 +256,7 @@ def main():
                     logger.exception(f"Error comparing {cleaned_file} and {prev_file_path}: {e}")
                     if pg_conn:
                         data_pushing.insert_processed_file(pg_conn, filename, 'critical cross-file comparison error')
-
-                    os.remove(os.path.join(UPLOAD_FOLDER, filename))
-                    if os.path.exists(cleaned_file):
-                        os.remove(cleaned_file)
-                    logger.error("Logging the error in the database and exiting...")
-                    continue
+                    return False
         else:
             logger.info("No other files to compare with. Proceeding to insert.")
 
@@ -357,23 +290,12 @@ def main():
                 logger.error(f"ERROR: {process_and_insert_result.get('error', 'Unknown error')}")
                 if pg_conn:
                     data_pushing.insert_processed_file(pg_conn, filename, 'insert error')
-                    pg_conn.close()
-
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
-                if os.path.exists(cleaned_file):
-                    os.remove(cleaned_file)
-                logger.error("Logging the error in the database and exiting...")
-                continue
+                return False
         except Exception as e:
             logger.exception(f"Error inserting {cleaned_file} into ClickHouse: {e}")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'critical insert error')
-                pg_conn.close()
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
-            if os.path.exists(cleaned_file):
-                os.remove(cleaned_file)
-            logger.error("Logging the error in the database and exiting...")
-            continue
+            return False
 
         logger.info(f"Successfully uploaded {cleaned_file} to ClickHouse")
 
@@ -384,7 +306,7 @@ def main():
                 s3_client.put_object(Bucket=AWS_BUCKET, Key=f"{S3_PROCESSED_FOLDER}/{table_name}/")
             except Exception as e:
                 logger.exception(f"Error creating folder structure in S3: {e}")
-                continue
+                return False
 
             # Upload the file to S3
             s3_client.upload_file(cleaned_file, AWS_BUCKET, f"{S3_PROCESSED_FOLDER}/{table_name}/{os.path.basename(cleaned_file)}")
@@ -393,12 +315,7 @@ def main():
             logger.exception(f"Error uploading {cleaned_file} to S3: {e}")
             if pg_conn:
                 data_pushing.insert_processed_file(pg_conn, filename, 'upload error')
-                pg_conn.close()
-            os.remove(os.path.join(UPLOAD_FOLDER, filename))
-            if os.path.exists(cleaned_file):
-                os.remove(cleaned_file)
-            logger.error("Logging the error in the database and exiting...")
-            continue
+            return False
 
         # Update last_id
         logger.info(f"Updating last_id for {table_name} ...")
@@ -408,45 +325,108 @@ def main():
                 logger.error(f"ERROR: {update_last_id_result.get('error', 'Unknown error')}")
                 if pg_conn:
                     data_pushing.insert_processed_file(pg_conn, filename, 'update last_id error')
-                    pg_conn.close()
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
-                if os.path.exists(cleaned_file):
-                    os.remove(cleaned_file)
-                logger.error("Logging the error in the database and exiting...")
-                continue
+                return False
         except Exception as e:
             logger.exception(f"Error updating last_id: {e}")
-            continue
+            return False
 
-        # check if the local storage is more than 20GB, if so, remove the oldest file
-        total_size = sum(os.path.getsize(f) for f in os.listdir(PROCESSED_FOLDER) if os.path.isfile(f))
-        if total_size > 20 * 1024 * 1024 * 1024:
-            oldest_file = min(
-                (os.path.join(PROCESSED_FOLDER, f) for f in os.listdir(PROCESSED_FOLDER)),
-                key=os.path.getctime
-            )
-            os.remove(oldest_file)
-            logger.info(f"Removed oldest file {oldest_file} to free up space.")
-
-        # Remove the original file after processing
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                logger.info(f"Removed original file {file_path} after processing.")
-
-            if filename in os.listdir(UPLOAD_FOLDER):
-                os.remove(os.path.join(UPLOAD_FOLDER, filename))
-                logger.info(f"Removed original file {os.path.join(UPLOAD_FOLDER, filename)} after processing.")
-        except FileNotFoundError:
-            logger.warning(f"Original file {file_path} not found for removal.")
-        except Exception as e:
-            logger.exception(f"Error removing original file {file_path}: {e}")
-
+        return True
         
-    logger.info("File processing completed.")
-    return
+    except Exception as e:
+        logger.exception(f"Unexpected error processing file {filename}: {e}")
+        if pg_conn:
+            data_pushing.insert_processed_file(pg_conn, filename, f'unexpected error: {str(e)[:100]}')
+        return False
+        
+    finally:
+        # Clean up all temporary files whether processing succeeded or failed
+        cleanup.cleanup_files(file_path)
+        # Don't clean up cleaned_file yet as we might need it for future deduplication
+
+def main():
+    """
+    Process files in the UPLOAD_FOLDER and save processed files in table-specific subfolders
+    within the PROCESSED_FOLDER before pushing to ClickHouse.
+    Checks daily for new files, skips already processed ones, and handles deduplication
+    both within and across files.
+    """
+    logger.info("Starting the file processing script...")
+    
+    # Run storage cleanup on startup to ensure we have space
+    cleanup.check_storage_and_cleanup()
+
+    try:
+        # Query processed files
+        query = data_pushing.query_processed_files(pg_conn)
+        processed_files = set([file[0] for file in query])
+
+        # List all files in S3 upload folder
+        uploaded_files = s3_client.list_objects_v2(Bucket=AWS_BUCKET, Prefix=S3_UPLOAD_FOLDER)
+        if 'Contents' not in uploaded_files or not uploaded_files['Contents']:
+            logger.info("No new files to process. Exiting...")
+            return
+
+        # Check for new files to process
+        for obj in uploaded_files['Contents']:
+            file_key = obj['Key']
+            filename = os.path.basename(file_key)
+
+            # Skip if not a file or already processed or wrong format
+            if filename in processed_files or not filename.endswith(('.csv', '.zip')):
+                logger.info(f"Skipping {filename}: Already processed, not a file, or invalid format.")
+                continue
+                
+            success = False
+            try:
+                # Process the file
+                success = process_file(filename, file_key)
+                
+                if success:
+                    logger.info(f"Successfully processed file: {filename}")
+                    # Check storage after each successful processing
+                    cleanup.check_storage_and_cleanup()
+                else:
+                    logger.error(f"Failed to process file: {filename}")
+            except Exception as e:
+                logger.exception(f"Unexpected error processing file {filename}: {e}")
+            finally:
+                # Clean up files in the UPLOAD_FOLDER regardless of processing outcome
+                upload_file_path = os.path.join(UPLOAD_FOLDER, filename)
+                cleanup.cleanup_files(upload_file_path)
+                
+                # Clean up extracted files
+                if filename.endswith('.zip'):
+                    # Get base filename without extension
+                    base_name = os.path.splitext(filename)[0]
+                    # Clean up any potential extracted files with similar names in the extracted folder
+                    for extracted_file in os.listdir(EXTRACTED_FOLDER):
+                        if extracted_file.startswith(base_name):
+                            cleanup.cleanup_files(os.path.join(EXTRACTED_FOLDER, extracted_file))
+    
+    except Exception as e:
+        logger.exception(f"Unexpected error in main function: {e}")
+    
+    finally:
+        # Always run cleanup before exiting
+        cleanup.cleanup_old_files(UPLOAD_FOLDER)
+        cleanup.cleanup_old_files(EXTRACTED_FOLDER)
+        
+        # Only clean up old processed files, not all of them
+        # as we need some for deduplication
+        cleanup.cleanup_old_files(PROCESSED_FOLDER, max_age_days=7)  # Keep processed files a bit longer
+        
+        # Final storage check
+        cleanup.check_storage_and_cleanup()
+        
+        logger.info("File processing completed.")
 
 if __name__ == '__main__':
+    # Run storage cleanup on startup to ensure we have space
+    logger.info("Cleaning up old files...")
+    cleanup.cleanup_old_files(UPLOAD_FOLDER, max_age_days=1)
+    cleanup.cleanup_old_files(EXTRACTED_FOLDER, max_age_days=1)
+    cleanup.cleanup_old_files(PROCESSED_FOLDER, max_age_days=7)
+
     while True:
         logger.info("Running the main function...")
         try:

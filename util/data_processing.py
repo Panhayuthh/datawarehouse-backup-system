@@ -78,8 +78,8 @@ def extract_file(file_path, output_path):
     logger.info(f"File extracted and renamed to {new_file_path}")
     return new_file_path
 
-def detect_delimiter(file_path):
-    with open(file_path, 'r') as file:
+def detect_delimiter(file_path, encoding='utf-8'):
+    with open(file_path, 'r', encoding=encoding) as file:
         first_line = file.readline()
         delimiters = [',', ';', '\t', '|']
         counts = Counter({delim: first_line.count(delim) for delim in delimiters})
@@ -119,7 +119,7 @@ def rename_column_in_csv(file_path, column_mapping, output_file):
         logger.info(f"Detected encoding: {encoding}")
 
         # Detect delimiter
-        delimiter = detect_delimiter(file_path)
+        delimiter = detect_delimiter(file_path, encoding=encoding)
         # print(f"Detected delimiter: {delimiter}")
         logger.info(f"Detected delimiter: {delimiter}")
 
