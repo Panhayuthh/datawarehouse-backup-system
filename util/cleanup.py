@@ -78,7 +78,7 @@ def cleanup_old_files(base_folder, max_age_days=MAX_FOLDER_AGE_DAYS):
         logger.info(f"Cleanup complete: Removed {removed_count} files ({round(removed_size / (1024 * 1024), 2)} MB)")
     return removed_count, removed_size
 
-def check_storage_and_cleanup():
+def check_storage_and_cleanup(max_storage_size=MAX_STORAGE_SIZE):
     """
     Check storage usage and clean up if necessary.
     Removes oldest files first until below threshold.
@@ -86,8 +86,8 @@ def check_storage_and_cleanup():
     # Check if we're over the storage limit
     total_size = sum(get_folder_size(folder) for folder in [UPLOAD_FOLDER, EXTRACTED_FOLDER, PROCESSED_FOLDER])
     
-    if total_size > MAX_STORAGE_SIZE:
-        logger.warning(f"Storage usage ({round(total_size / (1024 * 1024 * 1024), 2)} GB) exceeds limit ({round(MAX_STORAGE_SIZE / (1024 * 1024 * 1024), 2)} GB). Starting cleanup...")
+    if total_size > max_storage_size:
+        logger.warning(f"Storage usage ({round(total_size / (1024 * 1024 * 1024), 2)} GB) exceeds limit ({round(max_storage_size / (1024 * 1024 * 1024), 2)} GB). Starting cleanup...")
         
         # First try removing old files
         removed_count, removed_size = cleanup_old_files(UPLOAD_FOLDER)
@@ -97,7 +97,7 @@ def check_storage_and_cleanup():
         
         # If still over limit, remove oldest files regardless of age
         total_size = sum(get_folder_size(folder) for folder in [UPLOAD_FOLDER, EXTRACTED_FOLDER, PROCESSED_FOLDER])
-        if total_size > MAX_STORAGE_SIZE:
+        if total_size > max_storage_size:
             logger.warning(f"Still over storage limit. Removing oldest files...")
             
             # Get all files with their modification times
@@ -114,7 +114,7 @@ def check_storage_and_cleanup():
             
             # Remove oldest files until under limit
             for file_path, _ in all_files:
-                if total_size <= MAX_STORAGE_SIZE * 0.9:  # Remove until 90% of limit
+                if total_size <= max_storage_size * 0.9:  # Remove until 90% of limit
                     break
                     
                 try:

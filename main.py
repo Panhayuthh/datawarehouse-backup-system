@@ -397,7 +397,7 @@ def main():
         cleanup.cleanup_old_files(PROCESSED_FOLDER, max_age_days=7)  # Keep processed files a bit longer
         
         # Final storage check
-        cleanup.check_storage_and_cleanup()
+        cleanup.check_storage_and_cleanup(1 * 1024 * 1024 * 1024)  # 1 GB
         
         logger.info("File processing completed.")
 
