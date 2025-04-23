@@ -87,15 +87,39 @@ def detect_delimiter(file_path, encoding='utf-8'):
 
 def detect_encoding(file_path, sample_size=100000):
     """
-    Detects the encoding of a given file by analyzing a sample of bytes.
+    Detects whether a file is encoded in UTF-8 or UTF-16 by analyzing a sample of bytes.
 
     :param file_path: Path to the file to analyze.
     :param sample_size: Number of bytes to read for encoding detection (default: 100KB).
-    :return: Detected encoding.
+    :return: "utf-8", "utf-16", or None if not a UTF encoding.
     """
     with open(file_path, "rb") as f:
-        result = chardet.detect(f.read(sample_size))
-    return result["encoding"]
+        raw_data = f.read(sample_size)
+    
+    # Check for UTF-16 BOM (Byte Order Mark)
+    if raw_data.startswith(b'\xff\xfe') or raw_data.startswith(b'\xfe\xff'):
+        return "utf-16"
+    
+    # Check for UTF-8 BOM
+    if raw_data.startswith(b'\xef\xbb\xbf'):
+        return "utf-8"
+    
+    # If no BOM, try to decode as UTF-8
+    try:
+        raw_data.decode('utf-8')
+        return "utf-8"
+    except UnicodeDecodeError:
+        pass
+    
+    # Try UTF-16 (will try both endianness)
+    try:
+        raw_data.decode('utf-16')
+        return "utf-16"
+    except UnicodeDecodeError:
+        pass
+    
+    # If we reach here, it's likely neither UTF-8 nor UTF-16
+    return None
 
 def rename_column_in_csv(file_path, column_mapping, output_file):
     """
@@ -140,11 +164,18 @@ def rename_column_in_csv(file_path, column_mapping, output_file):
             
             if missing_columns:
                 missing_cols_str = ", ".join(missing_columns)
+                logger.warning(f"The following columns to be renamed don't exist in the file: {missing_cols_str}")
+                logger.warning(f"proceeding with renaming the existing columns")
+
                 return {
                     "success": False, 
-                    "error": f"The following columns to be renamed don't exist in the file: {missing_cols_str}",
-                    "missing_columns": list(missing_columns)
+                    "warning": f"The following columns to be renamed don't exist in the file: {missing_cols_str}",
                 }
+                # return {
+                #     "success": False, 
+                #     "error": f"The following columns to be renamed don't exist in the file: {missing_cols_str}",
+                #     "missing_columns": list(missing_columns)
+                # }
                 
             # print(f"Header validation successful. All columns to be renamed exist in the file.")
             logger.info(f"Header validation successful. All columns to be renamed exist in the file.")

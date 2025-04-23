@@ -435,27 +435,27 @@ def update_last_id(client, table_name, file_path):
         table_name: Name of the table.
         file_path: Path to the CSV file.
     """
-
     with open(file_path, 'r') as f:
         table_schema = json.load(f)
-
-    for table in table_schema:
-      if table in table_name:
-        clickhouse_table = table_schema[table]["table_name"]
-
-    last_id = get_last_id(client, clickhouse_table)
-    try:
-        table_schema[table]["last_id"] = last_id
-    except KeyError:
-        # print(f"Table {table} not found in schema. Adding it.")
-        logger.error(f"Table {table} not found in schema. Adding it.")
-        return {"success": False, "error": f"Table {table} not found in schema."}
-
+    
+    # Find the actual schema key that matches this table_name
+    matching_key = None
+    for key in table_schema:
+        if table_schema[key]["table_name"] == table_name:
+            matching_key = key
+            break
+    
+    if not matching_key:
+        logger.error(f"Table {table_name} not found in schema.")
+        return {"success": False, "error": f"Table {table_name} not found in schema."}
+    
+    last_id = get_last_id(client, table_name)
+    table_schema[matching_key]["last_id"] = last_id
+    
     with open(file_path, 'w') as f:
         json.dump(table_schema, f, indent=4)
-
-    # print(f"last_id updated for {table}")
-    logger.info(f"last_id updated for {table}")
+    
+    logger.info(f"last_id updated for {matching_key}")
     
     return {"success": True, "last_id": last_id}
 

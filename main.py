@@ -141,6 +141,10 @@ def process_file(filename, s3_file_key):
                 logger.error(f"ERROR: {rename_result.get('error', 'Unknown error')}")
                 data_pushing.insert_processed_file(filename, 'rename error')
                 return False
+            
+            if 'warning' in rename_result:
+                logger.warning(rename_result['warning'])
+
         except Exception as e:
             logger.exception(f"Error renaming columns: {e}")
             data_pushing.insert_processed_file(filename, 'critical rename error')
@@ -158,8 +162,12 @@ def process_file(filename, s3_file_key):
             current_columns = next(reader)  # Get header row
 
         # Add missing columns
-        if len(current_columns) + 2 != len(expected_columns):  # +2 for 'id' column and 'row_hash' column
-            logger.error(f"Column count mismatch: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
+        if len(current_columns) + 2 < len(expected_columns):  # +2 for 'id' column and 'row_hash' column
+            logger.warning(f"file {cleaned_file} has fewer columns than expected: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
+            # data_pushing.insert_processed_file(filename, 'column count mismatch')
+            # return False
+        elif len(current_columns) + 2 > len(expected_columns):
+            logger.error(f"file {cleaned_file} has more columns than expected: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
             data_pushing.insert_processed_file(filename, 'column count mismatch')
             return False
         else:
