@@ -154,31 +154,26 @@ def rename_column_in_csv(file_path, column_mapping, output_file):
             
             # Check if all columns in the mapping exist in the file
             columns_to_rename = set(column_mapping.keys())
-            missing_columns = columns_to_rename - file_columns
 
             # if the file column has less columns than the mapping give it a pass
-            if len(file_columns) < len(columns_to_rename):
-                missing_columns = columns_to_rename - file_columns
-                # print(f"Warning: The file has less columns than the mapping. Missing columns: {missing_columns}")
-                logger.warning(f"The file has less columns than the mapping. Missing columns: {missing_columns}")
-            
-            if missing_columns:
-                missing_cols_str = ", ".join(missing_columns)
-                logger.warning(f"The following columns to be renamed don't exist in the file: {missing_cols_str}")
-                logger.warning(f"proceeding with renaming the existing columns")
+            if len(file_columns) > len(columns_to_rename):
+                extract_columns = file_columns - columns_to_rename
+                logger.warning(f"The file has more columns than the mapping. Extra columns: {extract_columns}")
 
                 return {
                     "success": False, 
-                    "warning": f"The following columns to be renamed don't exist in the file: {missing_cols_str}",
+                    "error": f"The following columns to be renamed don't exist in the file: {missing_columns}",
+                    "missing_columns": list(missing_columns)
                 }
-                # return {
-                #     "success": False, 
-                #     "error": f"The following columns to be renamed don't exist in the file: {missing_cols_str}",
-                #     "missing_columns": list(missing_columns)
-                # }
+            elif len(file_columns) < len(columns_to_rename):
+                missing_columns = columns_to_rename - file_columns
+                # print(f"Warning: The file has less columns than the mapping. Missing columns: {missing_columns}")
+                logger.warning(f"The file has less columns than the mapping. Missing columns: {missing_columns}")
                 
-            # print(f"Header validation successful. All columns to be renamed exist in the file.")
-            logger.info(f"Header validation successful. All columns to be renamed exist in the file.")
+            else:
+                
+                # print(f"Header validation successful. All columns to be renamed exist in the file.")
+                logger.info(f"Header validation successful. All columns to be renamed exist in the file.")
         except Exception as e:
             return {"success": False, "error": f"Error reading file header: {str(e)}"}
 
@@ -206,9 +201,20 @@ def rename_column_in_csv(file_path, column_mapping, output_file):
             # print(f"\rChunk {i+1} processed and saved!", end="", flush=True)
             logger.info(f"Chunk {i+1} processed and saved!")
 
-        # print("\nColumn rename completed and saved to:", output_file)
-        logger.info(f"Column rename completed and saved to: {output_file}")
-        return {"success": True, "output_file": output_file}
+        if missing_columns:
+            missing_cols_str = ", ".join(missing_columns)
+            logger.warning(f"The following columns to be renamed don't exist in the file: {missing_cols_str}")
+            logger.warning(f"proceeding with renaming the existing columns")
+
+            return {
+                "success": True, 
+                "warning": f"The following columns to be renamed don't exist in the file: {missing_cols_str}",
+                "output_file": output_file,
+            }
+        else:
+            # print(f"All columns to be renamed exist in the file.")
+            logger.info(f"All columns to be renamed exist in the file.")
+            return {"success": True, "output_file": output_file}
     
     except Exception as e:
         # print(f"\nError processing file: {e}")

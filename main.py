@@ -141,9 +141,6 @@ def process_file(filename, s3_file_key):
                 logger.error(f"ERROR: {rename_result.get('error', 'Unknown error')}")
                 data_pushing.insert_processed_file(filename, 'rename error')
                 return False
-            
-            if 'warning' in rename_result:
-                logger.warning(rename_result['warning'])
 
         except Exception as e:
             logger.exception(f"Error renaming columns: {e}")
