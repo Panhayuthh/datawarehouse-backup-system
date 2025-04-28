@@ -397,16 +397,14 @@ def main():
         cleanup.cleanup_old_files(PROCESSED_FOLDER, max_age_days=7)  # Keep processed files a bit longer
         
         # Final storage check
-        cleanup.check_storage_and_cleanup(1 * 1024 * 1024 * 1024)  # 1 GB
+        cleanup.check_storage_and_cleanup()
         
         logger.info("File processing completed.")
 
 if __name__ == '__main__':
     # Run storage cleanup on startup to ensure we have space
     logger.info("Cleaning up old files...")
-    cleanup.cleanup_old_files(UPLOAD_FOLDER, max_age_days=1)
-    cleanup.cleanup_old_files(EXTRACTED_FOLDER, max_age_days=1)
-    cleanup.cleanup_old_files(PROCESSED_FOLDER, max_age_days=7)
+    cleanup.check_storage_and_cleanup(1 * 1024 * 1024 * 1024)  # 1 GB
 
     while True:
         logger.info("Running the main function...")
@@ -414,5 +412,5 @@ if __name__ == '__main__':
             main()
         except Exception as e:
             logger.exception(f"Unexpected error in main function: {e}")
-        logger.info("Sleeping for 7 days...")
-        time.sleep(7 * 24 * 60 * 60)  # Sleep for 7 days
+        logger.info("Sleeping for 1 days...")
+        time.sleep(1 * 24 * 60 * 60)  # Sleep for 1 days
