@@ -154,6 +154,7 @@ def rename_column_in_csv(file_path, column_mapping, output_file):
             
             # Check if all columns in the mapping exist in the file
             columns_to_rename = set(column_mapping.keys())
+            missing_columns = columns_to_rename - file_columns
 
             # if the file column has less columns than the mapping give it a pass
             if len(file_columns) > len(columns_to_rename):
