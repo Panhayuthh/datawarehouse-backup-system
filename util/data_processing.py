@@ -57,26 +57,9 @@ def extract_file(file_path, output_path):
     # Construct the full path of the extracted file
     extracted_file_path = output_path + '/' + extracted_file_name
 
-    # Extract the base name
-    base_name = extracted_file_name.split('/')[-1].rsplit('_', 1)[0]
-
-    # Extract the date from the original zip file name
-    match = re.search(r'\d+', os.path.basename(file_path))
-    if match:
-        file_date = match.group()  # Use the numeric part from the zip file name
-    else:
-        file_date = time.strftime("%Y%m%d")  # Use current date if no numeric part is found
-
-    # Construct the new file name
-    new_file_name = f"{base_name}_{file_date}.csv"
-    new_file_path = output_path + '/' + new_file_name
-
-    # Rename the extracted file
-    os.rename(extracted_file_path, new_file_path)
-
     # print(f"File extracted and renamed to {new_file_path}")
-    logger.info(f"File extracted and renamed to {new_file_path}")
-    return new_file_path
+    logger.info(f"File extracted to {extracted_file_path}")
+    return extracted_file_path
 
 def detect_delimiter(file_path, encoding='utf-8'):
     with open(file_path, 'r', encoding=encoding) as file:

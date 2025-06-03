@@ -107,18 +107,20 @@ def process_file(filename, s3_file_key):
             data_pushing.insert_processed_file(filename, 'not a valid CSV file')
             return False
 
-        # Get base table name from filename
+        # if the file name is last24h__* match it to the smallable_campaign_events table
         raw_file_name = os.path.splitext(os.path.basename(file_path))[0]
+        if raw_file_name.startswith('last24h__'):
+            table_name = 'smallable_campaign_events'
 
         # Get table schema to determine table name
-        table_schema = data_pushing.get_table_schema(table_name=raw_file_name, file_path=TABLE_SCHEMA)
+        table_schema = data_pushing.get_table_schema(table_name=table_name, file_path=TABLE_SCHEMA)
         if not table_schema:
             logger.error(f"No schema found for table {raw_file_name}")
             data_pushing.insert_processed_file(filename, 'no schema found')
             return False
 
         # Use table name from schema or fallback to raw filename
-        table_name = table_schema.get("table_name", raw_file_name)
+        table_name = table_schema.get("table_name", table_name)
 
         # Create table-specific subfolder in PROCESSED_FOLDER
         table_processed_folder = os.path.join(PROCESSED_FOLDER, table_name)
@@ -127,7 +129,7 @@ def process_file(filename, s3_file_key):
         cleaned_file = os.path.join(table_processed_folder, f"{raw_file_name}_cleaned.csv")
 
         # Get column mapping for renaming
-        column_names = data_processing.get_rename_columns(table_name=raw_file_name, file_path=RENAME_MAPPING)
+        column_names = data_processing.get_rename_columns(table_name=table_name, file_path=RENAME_MAPPING)
         if not column_names:
             logger.error(f"No column mapping found for {raw_file_name}")
             data_pushing.insert_processed_file(filename, 'no column mapping found')

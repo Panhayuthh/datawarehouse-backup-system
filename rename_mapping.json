@@ -92,7 +92,8 @@
       "Prénom Challenge Influence": "first_name_challenge_influence",
       "Montant et Devise Challenge Influence": "amount_currency_challenge_influence",
       "Code Challenge Influence": "challenge_influence_code",
-      "Relance Challenge Influence": "challenge_influence_follow_up"
+      "Relance Challenge Influence": "challenge_influence_follow_up",
+      "SMTP response": "smtp_response"
     },
     "smallable_contacts": {
       "Email": "email",

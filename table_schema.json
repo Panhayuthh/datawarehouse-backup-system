@@ -96,6 +96,7 @@
             "amount_currency_challenge_influence",
             "challenge_influence_code",
             "challenge_influence_follow_up",
+            "smtp_response",
             "row_hash"
         ],
         "column_types": [
@@ -179,6 +180,7 @@
             "Nullable(DateTime)",
             "Nullable(DateTime)",
             "Nullable(DateTime)",
+            "Nullable(String)",
             "Nullable(String)",
             "Nullable(String)",
             "Nullable(String)",
@@ -294,7 +296,9 @@
             "home_category_adult_furniture",
             "adult_care_beauty_category",
             "loyalty_operation_march_2024",
-            "currency_loyalty_operation_march_2024"
+            "currency_loyalty_operation_march_2024",
+            "smtp_response",
+            "row_hash"
         ],
         "dob_columns": [
             "date_of_birth",
@@ -305,7 +309,7 @@
             "child_4_date_of_birth",
             "child_5_date_of_birth"
         ],
-        "last_id": 18546935
+        "last_id": 30692769
     },
     "smallable_contacts": {
         "table_name": "splio_export_smallable_contacts",
