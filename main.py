@@ -133,6 +133,7 @@ def process_file(filename, s3_file_key):
         if not column_names:
             logger.error(f"No column mapping found for {raw_file_name}")
             data_pushing.insert_processed_file(filename, 'no column mapping found')
+            cleanup.cleanup_files(cleaned_file)
             return False
 
         # Rename columns
@@ -142,6 +143,7 @@ def process_file(filename, s3_file_key):
             if not rename_result.get('success', True):
                 logger.error(f"ERROR: {rename_result.get('error', 'Unknown error')}")
                 data_pushing.insert_processed_file(filename, 'rename error')
+                cleanup.cleanup_files(cleaned_file)
                 return False
 
         except Exception as e:
@@ -168,6 +170,7 @@ def process_file(filename, s3_file_key):
         elif len(current_columns) + 2 > len(expected_columns):
             logger.error(f"file {cleaned_file} has more columns than expected: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
             data_pushing.insert_processed_file(filename, 'column count mismatch')
+            cleanup.cleanup_files(cleaned_file)
             return False
         else:
             logger.info(f"Column count matches: {len(current_columns) + 2} found, {len(expected_columns)} expected.")
@@ -182,10 +185,12 @@ def process_file(filename, s3_file_key):
                     if not add_column_result.get('success', True):
                         logger.error(f"ERROR: {add_column_result.get('error', 'Unknown error')}")
                         data_pushing.insert_processed_file(filename, 'add column error')
+                        cleanup.cleanup_files(cleaned_file)
                         return False
                 except Exception as e:
                     logger.exception(f"Error adding column {column_name}: {e}")
                     data_pushing.insert_processed_file(filename, 'critical add column error')
+                    cleanup.cleanup_files(cleaned_file)
                     return False
                 shutil.move(temp_file, cleaned_file)
 
@@ -196,10 +201,12 @@ def process_file(filename, s3_file_key):
             if not self_deduplicate_result.get('success', True):
                 logger.error(f"ERROR: {self_deduplicate_result.get('error', 'Unknown error')}")
                 data_pushing.insert_processed_file(filename, 'self deduplication error')
+                cleanup.cleanup_files(cleaned_file)
                 return False
         except Exception as e:
             logger.exception(f"Error during deduplication: {e}")
             data_pushing.insert_processed_file(filename, 'critical self deduplication error')
+            cleanup.cleanup_files(cleaned_file)
             return False
 
         logger.info('Checking for processed files...')
@@ -229,6 +236,7 @@ def process_file(filename, s3_file_key):
                     if not compare_and_deduplicate_result.get('success', True):
                         logger.error(f"ERROR: {compare_and_deduplicate_result.get('error', 'Unknown error')}")
                         data_pushing.insert_processed_file(filename, 'cross-file comparison error')
+                        cleanup.cleanup_files(cleaned_file)
                         return False
 
                     # Then optionally replace the cleaned file if needed
@@ -236,6 +244,7 @@ def process_file(filename, s3_file_key):
                 except Exception as e:
                     logger.exception(f"Error comparing {cleaned_file} and {prev_file_path}: {e}")
                     data_pushing.insert_processed_file(filename, 'critical cross-file comparison error')
+                    cleanup.cleanup_files(cleaned_file)
                     return False
         else:
             logger.info("No other files to compare with. Proceeding to insert.")
@@ -306,6 +315,7 @@ def process_file(filename, s3_file_key):
             if not update_last_id_result.get('success', True):
                 logger.error(f"ERROR: {update_last_id_result.get('error', 'Unknown error')}")
                 data_pushing.insert_processed_file(filename, 'update last_id error')
+                cleanup.cleanup_files(cleaned_file)
                 return False
         except Exception as e:
             logger.exception(f"Error updating last_id: {e}")
@@ -319,7 +329,6 @@ def process_file(filename, s3_file_key):
         return False
         
     finally:
-        # Clean up all temporary files whether processing succeeded or failed
         cleanup.cleanup_files(file_path)
         # Don't clean up cleaned_file yet as we might need it for future deduplication
 
@@ -393,7 +402,7 @@ def main():
         
         # Only clean up old processed files, not all of them
         # as we need some for deduplication
-        cleanup.cleanup_old_files(PROCESSED_FOLDER, max_age_days=7)  # Keep processed files a bit longer
+        cleanup.cleanup_old_files(PROCESSED_FOLDER, max_age_days=30)  # Keep processed files a bit longer
         
         # Final storage check
         cleanup.check_storage_and_cleanup()
